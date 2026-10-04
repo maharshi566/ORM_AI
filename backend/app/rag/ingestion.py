@@ -15,6 +15,7 @@ admin pages and audits (Phase 6-7) can list what the assistant can cite without
 opening ChromaDB.
 """
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,13 @@ from app.models import Document, DocumentChunk, Shop
 from app.rag.chunking import DEFAULT_MAX_TOKENS, DEFAULT_OVERLAP_TOKENS, Chunk, chunk_documents
 from app.rag.embeddings import Embedder
 from app.rag.loaders import LoadedDocument, load_directory
-from app.rag.vector_store import COLLECTION_GROUPS, VectorStore, group_for_category
+from app.rag.vector_store import (
+    COLLECTION_GROUPS,
+    AsyncVectorStore,
+    VectorStore,
+    as_async,
+    group_for_category,
+)
 
 
 @dataclass
@@ -71,7 +78,7 @@ class IngestReport:
 async def ingest_knowledge_base(
     *,
     kb_dir: Path,
-    store: VectorStore | None,
+    store: VectorStore | AsyncVectorStore | None,
     embedder: Embedder | None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     rebuild: bool = False,
@@ -81,8 +88,11 @@ async def ingest_knowledge_base(
     overlap_tokens: int = DEFAULT_OVERLAP_TOKENS,
 ) -> IngestReport:
     started = time.perf_counter()
-    docs = load_directory(kb_dir)
-    chunks = chunk_documents(docs, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
+    # Reading files (and PDFs) and chunking are blocking work, so they run in a thread.
+    docs = await asyncio.to_thread(load_directory, kb_dir)
+    chunks = await asyncio.to_thread(
+        chunk_documents, docs, max_tokens=max_tokens, overlap_tokens=overlap_tokens
+    )
     report = IngestReport(
         embedding_model=embedder.model if embedder else "-",
         documents=len(docs),
@@ -98,10 +108,11 @@ async def ingest_knowledge_base(
         return report
     if store is None or embedder is None:
         raise ValueError("store and embedder are required unless dry_run is set")
+    store = as_async(store)
 
     if rebuild:
-        store.reset()
-    existing = store.ids_by_group()
+        await store.reset()
+    existing = await store.ids_by_group()
     existing_ids = {chunk_id for ids in existing.values() for chunk_id in ids}
     wanted_ids = {chunk.id for chunk in chunks}
 
@@ -109,13 +120,13 @@ async def ingest_knowledge_base(
     for start in range(0, len(new), batch_size):
         batch = new[start : start + batch_size]
         vectors = await embedder.embed_documents([chunk.embedding_text for chunk in batch])
-        store.add_documents(batch, vectors)
+        await store.add_documents(batch, vectors)
         report.embedded_tokens += sum(chunk.token_count for chunk in batch)
         for chunk in batch:
             report.group(group_for_category(chunk.metadata.category)).added += 1
 
     stale = existing_ids - wanted_ids
-    store.delete_ids(stale)
+    await store.delete_ids(stale)
     for group, ids in existing.items():
         report.group(group).removed = len(ids & stale)
     for stats in report.by_group.values():

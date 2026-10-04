@@ -19,7 +19,14 @@ from pathlib import Path
 
 from app.config.settings import get_settings
 from app.models.database import make_engine
-from app.seed.generator import DEFAULT_ANCHOR, DEFAULT_DAYS, DEFAULT_SEED, generate, validate
+from app.seed.generator import (
+    DEFAULT_ANCHOR,
+    DEFAULT_DAYS,
+    DEFAULT_SEED,
+    Dataset,
+    generate,
+    validate,
+)
 from app.seed.loader import (
     database_has_shop_data,
     edge_cases_markdown,
@@ -47,9 +54,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _write_files(dataset: Dataset, export_dir: Path | None) -> list[Path]:
+    """Write EDGE_CASES.md (and the CSV files, if asked). Blocking: run in a thread."""
+    (BACKEND_DIR / "data" / "seed").mkdir(parents=True, exist_ok=True)
+    # newline="\n" keeps LF line endings on Windows too, so git sees no change.
+    (BACKEND_DIR / "data" / "seed" / "EDGE_CASES.md").write_text(
+        edge_cases_markdown(dataset), encoding="utf-8", newline="\n"
+    )
+    return export_csv(dataset, export_dir) if export_dir else []
+
+
 async def run(args: argparse.Namespace) -> int:
-    dataset = generate(seed=args.seed, anchor=args.anchor, days=args.days)
-    problems = validate(dataset)
+    # Generating the data is CPU work and writing files is disk work: both run in a
+    # worker thread so the event loop is never blocked.
+    dataset = await asyncio.to_thread(generate, seed=args.seed, anchor=args.anchor, days=args.days)
+    problems = await asyncio.to_thread(validate, dataset)
     if problems:
         print("Generated data failed validation:", *problems, sep="\n  ", file=sys.stderr)
         return 1
@@ -60,13 +79,8 @@ async def run(args: argparse.Namespace) -> int:
     print(f"  {'edge cases':<22} {len(dataset.edge_cases):>6}")
     print(f"Fingerprint: {dataset.fingerprint()}")
 
-    (BACKEND_DIR / "data" / "seed").mkdir(parents=True, exist_ok=True)
-    # newline="\n" keeps LF line endings on Windows too, so git sees no change.
-    (BACKEND_DIR / "data" / "seed" / "EDGE_CASES.md").write_text(
-        edge_cases_markdown(dataset), encoding="utf-8", newline="\n"
-    )
+    files = await asyncio.to_thread(_write_files, dataset, args.export_dir)
     if args.export_dir:
-        files = export_csv(dataset, args.export_dir)
         print(f"Wrote {len(files)} files to {args.export_dir}")
 
     if args.dry_run:

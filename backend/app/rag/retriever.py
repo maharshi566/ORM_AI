@@ -33,7 +33,14 @@ from app.rag.context import looks_like_injection
 from app.rag.embeddings import Embedder, EmbeddingError
 from app.rag.reranker import HeuristicReranker, Reranker
 from app.rag.text import search_terms
-from app.rag.vector_store import SearchFilters, StoredChunk, VectorStore, matches_filter
+from app.rag.vector_store import (
+    AsyncVectorStore,
+    SearchFilters,
+    StoredChunk,
+    VectorStore,
+    as_async,
+    matches_filter,
+)
 
 logger = get_logger(__name__)
 
@@ -157,14 +164,14 @@ class KeywordIndex:
 class KnowledgeRetriever:
     def __init__(
         self,
-        store: VectorStore,
+        store: VectorStore | AsyncVectorStore,
         embedder: Embedder,
         *,
         reranker: Reranker | None = None,
         candidate_pool: int = 20,
         min_similarity: float | None = None,
     ) -> None:
-        self.store = store
+        self.store = as_async(store)  # ChromaDB blocks, so it is always called in a thread
         self.embedder = embedder
         self.reranker = reranker or HeuristicReranker()
         self.candidate_pool = candidate_pool
@@ -177,15 +184,16 @@ class KnowledgeRetriever:
 
     async def _keyword_index(self) -> KeywordIndex:
         async with self._index_lock:
-            fingerprint = await asyncio.to_thread(self.store.fingerprint)
+            fingerprint = await self.store.fingerprint()
             if self._index is None or fingerprint != self._index_fingerprint:
-                chunks = await asyncio.to_thread(self.store.get_chunks)
+                chunks = await self.store.get_chunks()
                 if not chunks:
                     raise KnowledgeBaseEmptyError(
                         "The knowledge base is empty for embedding model "
                         f"{self.store.embedding_model}. Run: python -m scripts.ingest"
                     )
-                self._index, self._index_fingerprint = KeywordIndex(chunks), fingerprint
+                index = await asyncio.to_thread(KeywordIndex, chunks)  # CPU work: off the loop
+                self._index, self._index_fingerprint = index, fingerprint
             return self._index
 
     async def search(
@@ -204,9 +212,7 @@ class KnowledgeRetriever:
         vector_hits: list[StoredChunk] = []
         try:
             query_vector = await self.embedder.embed_query(query)
-            vector_hits = await asyncio.to_thread(
-                self.store.search_documents, query_vector, k=pool, filters=filters
-            )
+            vector_hits = await self.store.search_documents(query_vector, k=pool, filters=filters)
             if vector_hits:
                 result.best_similarity = vector_hits[0].similarity
         except EmbeddingError as exc:

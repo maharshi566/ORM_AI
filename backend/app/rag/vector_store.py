@@ -22,13 +22,18 @@ because vectors from different models cannot be compared.
 
 The functions the project spec asks for are ``add_documents``,
 ``search_documents``, ``metadata_filter``, ``update_document`` and
-``delete_document``. ChromaDB calls are synchronous; the retriever runs them in a
-worker thread so they never block the API's event loop.
+``delete_document``.
+
+ChromaDB's embedded client is synchronous: it blocks while it reads and writes
+files. ``VectorStore`` is that blocking layer. Async code (the API, the agents,
+ingestion) uses ``AsyncVectorStore`` instead, which runs every call in a worker
+thread so the event loop stays free to serve other requests.
 """
 
+import asyncio
 import hashlib
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
@@ -300,3 +305,74 @@ class VectorStore:
     def fingerprint(self) -> str:
         """Changes whenever chunks are added or removed (used to refresh caches)."""
         return hashlib.sha256("\n".join(sorted(self.ids())).encode()).hexdigest()
+
+
+class AsyncVectorStore:
+    """The async face of ``VectorStore``: the same methods, each run in a worker thread.
+
+    Use this from ``async def`` code. Calling the plain ``VectorStore`` there would
+    freeze the whole API for as long as ChromaDB takes to answer. Calls run one at a
+    time, because the embedded ChromaDB client keeps cached collection handles and
+    writes its files through a single SQLite database anyway.
+    """
+
+    def __init__(self, store: VectorStore) -> None:
+        self.sync = store  # the blocking store; only touch it from a worker thread
+        self._lock = asyncio.Lock()
+
+    @property
+    def embedding_model(self) -> str:
+        return self.sync.embedding_model
+
+    @property
+    def persist_dir(self) -> Path:
+        return self.sync.persist_dir
+
+    def collection_name(self, group: str) -> str:
+        return self.sync.collection_name(group)
+
+    async def _run[T](self, call: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        async with self._lock:
+            return await asyncio.to_thread(call, *args, **kwargs)
+
+    async def add_documents(self, chunks: list[Chunk], embeddings: list[list[float]]) -> int:
+        return await self._run(self.sync.add_documents, chunks, embeddings)
+
+    async def delete_ids(self, ids: set[str]) -> int:
+        return await self._run(self.sync.delete_ids, ids)
+
+    async def delete_document(self, document_key: str) -> int:
+        return await self._run(self.sync.delete_document, document_key)
+
+    async def update_document(
+        self, document_key: str, chunks: list[Chunk], embeddings: list[list[float]]
+    ) -> int:
+        return await self._run(self.sync.update_document, document_key, chunks, embeddings)
+
+    async def reset(self) -> None:
+        await self._run(self.sync.reset)
+
+    async def search_documents(
+        self, query_embedding: list[float], *, k: int = 5, filters: SearchFilters | None = None
+    ) -> list[StoredChunk]:
+        return await self._run(self.sync.search_documents, query_embedding, k=k, filters=filters)
+
+    async def get_chunks(self, filters: SearchFilters | None = None) -> list[StoredChunk]:
+        return await self._run(self.sync.get_chunks, filters)
+
+    async def ids_by_group(self) -> dict[str, set[str]]:
+        return await self._run(self.sync.ids_by_group)
+
+    async def ids(self) -> set[str]:
+        return await self._run(self.sync.ids)
+
+    async def count(self) -> dict[str, int]:
+        return await self._run(self.sync.count)
+
+    async def fingerprint(self) -> str:
+        return await self._run(self.sync.fingerprint)
+
+
+def as_async(store: "VectorStore | AsyncVectorStore") -> AsyncVectorStore:
+    """The async wrapper for ``store`` (already-wrapped stores are returned unchanged)."""
+    return store if isinstance(store, AsyncVectorStore) else AsyncVectorStore(store)

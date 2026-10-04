@@ -93,7 +93,7 @@ async def run(args: argparse.Namespace) -> int:
     except EmbeddingConfigError as exc:
         print(exc, file=sys.stderr)
         return 2
-    store = VectorStore(chroma_dir, embedder.model)
+    store = await asyncio.to_thread(VectorStore, chroma_dir, embedder.model)  # opens ChromaDB
     engine = None
     session_factory = None
     if not args.skip_db:

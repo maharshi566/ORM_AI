@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import sys
 from datetime import date
+from pathlib import Path
 
 from app.config.paths import BACKEND_DIR, backend_path
 from app.config.settings import get_settings
@@ -36,17 +37,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _write_report(path: Path, markdown: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(markdown, encoding="utf-8", newline="\n")  # LF on every OS
+
+
 async def run(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging("WARNING", json_logs=settings.log_json)
     if args.chroma_dir:
         settings = settings.model_copy(update={"chroma_persist_dir": args.chroma_dir})
     try:
-        retriever = build_retriever(settings, embedding_model=args.embedding_model)
+        retriever = await asyncio.to_thread(
+            build_retriever, settings, embedding_model=args.embedding_model
+        )
     except EmbeddingConfigError as exc:
         print(exc, file=sys.stderr)
         return 2
-    cases, no_answer = load_cases(backend_path(args.dataset))
+    cases, no_answer = await asyncio.to_thread(load_cases, backend_path(args.dataset))
     try:
         report = await evaluate(
             retriever, cases, no_answer, k=args.k, as_of=settings.business_date or date.today()
@@ -72,10 +80,9 @@ async def run(args: argparse.Namespace) -> int:
     if hint := report.calibration():
         print(f"  {hint}")
 
-    REPORTS.mkdir(parents=True, exist_ok=True)
     slug = report.embedding_model.replace("/", "-")
     path = REPORTS / f"retrieval-{slug}.md"
-    path.write_text(to_markdown(report, min_hit=args.min_hit), encoding="utf-8", newline="\n")
+    await asyncio.to_thread(_write_report, path, to_markdown(report, min_hit=args.min_hit))
     print(f"Report: {path.relative_to(BACKEND_DIR)}")
     passed = report.hit_at_k >= args.min_hit
     print("PASS" if passed else "FAIL: below the gate")

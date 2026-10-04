@@ -3,6 +3,7 @@
 Run locally with:  uvicorn app.main:app --reload
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -48,6 +49,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
     )
     app.state.settings = settings
+    app.state.knowledge_retriever = None  # built on the first search (see api/routes/knowledge.py)
+    app.state.knowledge_lock = asyncio.Lock()
     app.dependency_overrides[get_settings] = lambda: settings
 
     # The last middleware added runs first, so request IDs wrap everything else.
