@@ -3,7 +3,9 @@
 One interface, ``Embedder``, with two implementations chosen by ``EMBEDDING_MODEL``:
 
 * ``OpenAIEmbedder`` (any ``text-embedding-*`` model, default
-  ``text-embedding-3-small``): real semantic search. Needs ``OPENAI_API_KEY``.
+  ``text-embedding-3-small``): real semantic search. Needs ``OPENAI_API_KEY``, or a
+  gateway that speaks the OpenAI API (``LLM_BASE_URL`` / ``EMBEDDING_BASE_URL``, for
+  example OmniRoute; see docs/omniroute.md).
 * ``HashEmbedder`` (``EMBEDDING_MODEL=hash``): offline and free. It maps words and
   word pairs to vector positions with a hash ("feature hashing"), so it matches
   shared words, not meanings. Used by the tests and CI, and handy for trying the
@@ -22,6 +24,13 @@ from openai import AsyncOpenAI
 
 from app.config.settings import Settings
 from app.rag.text import search_terms
+from app.services.llm_service import (
+    LLMConfigError,
+    LLMEndpoint,
+    explain_error,
+    make_client,
+    resolve_endpoint,
+)
 
 DEFAULT_HASH_DIMENSIONS = 512
 
@@ -88,17 +97,22 @@ class HashEmbedder:
 
 
 class OpenAIEmbedder:
-    """OpenAI embeddings API. The SDK already retries 429 and 5xx responses with
-    exponential backoff (``max_retries``); what still fails becomes EmbeddingError."""
+    """Embeddings from OpenAI or any server that speaks the same API (a gateway).
+
+    The SDK already retries 429 and 5xx responses with exponential backoff
+    (``max_retries``); what still fails becomes EmbeddingError, with a message that
+    names where the call went (``endpoint.where``) and what to try.
+    """
 
     # text-embedding-3 models score unrelated text around 0.0-0.2 and related
-    # text around 0.3-0.7 (cosine similarity).
+    # text around 0.3-0.7 (cosine similarity). Other models behave differently:
+    # set RETRIEVAL_MIN_SIMILARITY after running scripts.eval_retrieval.
     min_similarity = 0.25
 
     def __init__(
         self,
         model: str,
-        api_key: str,
+        endpoint: LLMEndpoint,
         *,
         timeout: float = 30.0,
         max_retries: int = 3,
@@ -106,10 +120,9 @@ class OpenAIEmbedder:
         client: AsyncOpenAI | None = None,
     ) -> None:
         self.model = model
+        self.endpoint = endpoint
         self.batch_size = batch_size
-        self._client = client or AsyncOpenAI(
-            api_key=api_key, timeout=timeout, max_retries=max_retries
-        )
+        self._client = client or make_client(endpoint, timeout=timeout, max_retries=max_retries)
 
     async def _embed(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
@@ -119,30 +132,14 @@ class OpenAIEmbedder:
                 text if text.strip() else " " for text in texts[start : start + self.batch_size]
             ]
             try:
-                response = await self._client.embeddings.create(model=self.model, input=batch)
-            except openai.AuthenticationError as exc:
-                raise EmbeddingError(
-                    "OpenAI rejected the API key. Check OPENAI_API_KEY in .env.", retryable=False
-                ) from exc
-            except openai.RateLimitError as exc:
-                raise EmbeddingError(
-                    "OpenAI rate limit or quota reached. Wait a minute, and check the "
-                    "account's billing and limits if it keeps happening.",
-                    retryable=True,
-                ) from exc
-            except (openai.APITimeoutError, openai.APIConnectionError) as exc:
-                raise EmbeddingError(
-                    "Could not reach the OpenAI API (timeout or network error).", retryable=True
-                ) from exc
-            except openai.APIStatusError as exc:
-                raise EmbeddingError(
-                    f"OpenAI embeddings failed with HTTP {exc.status_code}.",
-                    retryable=exc.status_code >= 500,
-                ) from exc
+                # "float" is spelled out because the SDK would otherwise ask for base64
+                # (smaller), which not every gateway understands.
+                response = await self._client.embeddings.create(
+                    model=self.model, input=batch, encoding_format="float"
+                )
             except openai.OpenAIError as exc:
-                raise EmbeddingError(
-                    f"OpenAI embeddings failed ({type(exc).__name__}).", retryable=False
-                ) from exc
+                failure = explain_error(exc, self.endpoint, doing="embeddings", model=self.model)
+                raise EmbeddingError(failure.message, retryable=failure.retryable) from exc
             vectors.extend(item.embedding for item in sorted(response.data, key=lambda d: d.index))
         return vectors
 
@@ -162,12 +159,16 @@ def build_embedder(settings: Settings, model: str | None = None) -> Embedder:
     if name == "hash" or name.startswith("hash-"):
         dimensions = int(name.split("-", 1)[1]) if "-" in name else DEFAULT_HASH_DIMENSIONS
         return HashEmbedder(dimensions)
-    key = settings.openai_api_key.get_secret_value().strip() if settings.openai_api_key else ""
-    if not key:
+    try:
+        endpoint = resolve_endpoint(settings, "embeddings")
+    except LLMConfigError as exc:
+        raise EmbeddingConfigError(str(exc)) from exc
+    if endpoint is None:
         raise EmbeddingConfigError(
-            f"EMBEDDING_MODEL is {name}, which needs OPENAI_API_KEY in .env. To try "
-            "without a key, set EMBEDDING_MODEL=hash or pass --embedding-model hash."
+            f"EMBEDDING_MODEL is {name}, which needs OPENAI_API_KEY in .env (or LLM_BASE_URL "
+            "for a gateway such as OmniRoute). To try without a key, set EMBEDDING_MODEL=hash "
+            "or pass --embedding-model hash."
         )
     return OpenAIEmbedder(
-        name, key, timeout=settings.llm_timeout_seconds, max_retries=settings.llm_max_retries
+        name, endpoint, timeout=settings.llm_timeout_seconds, max_retries=settings.llm_max_retries
     )

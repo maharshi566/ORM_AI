@@ -16,6 +16,7 @@ from app.rag.embeddings import (
     OpenAIEmbedder,
     build_embedder,
 )
+from app.services.llm_service import LLMEndpoint
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -58,10 +59,18 @@ class FakeEmbeddings:
 
     def __init__(self, error: Exception | None = None) -> None:
         self.calls: list[list[str]] = []
+        self.options: dict[str, object] = {}
         self.error = error
 
-    async def create(self, *, model: str, input: list[str]) -> SimpleNamespace:  # noqa: A002
+    async def create(
+        self,
+        *,
+        model: str,
+        input: list[str],
+        **options: object,  # noqa: A002
+    ) -> SimpleNamespace:
         self.calls.append(list(input))
+        self.options = options
         if self.error:
             raise self.error
         items = [
@@ -73,7 +82,13 @@ class FakeEmbeddings:
 
 def openai_embedder(fake: FakeEmbeddings, batch_size: int = 2) -> OpenAIEmbedder:
     client = SimpleNamespace(embeddings=fake)
-    return OpenAIEmbedder("text-embedding-3-small", "sk-test", batch_size=batch_size, client=client)  # type: ignore[arg-type]
+    endpoint = LLMEndpoint("embeddings", None, "sk-test", "OPENAI_API_KEY")
+    return OpenAIEmbedder(
+        "text-embedding-3-small",
+        endpoint,
+        batch_size=batch_size,
+        client=client,  # type: ignore[arg-type]
+    )
 
 
 async def test_openai_embedder_batches_and_keeps_order() -> None:

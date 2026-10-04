@@ -6,9 +6,11 @@ Chosen with ``RERANKER`` in ``.env``:
   adds small, explainable bonuses: the question's words appear in the section
   heading or the document title. Superseded versions and untrusted outside
   documents are pushed down, so the current rule is cited first.
-* ``llm``: asks the fast LLM (``LLM_MODEL_FAST``) to score each candidate 0-3 and
-  blends that with the heuristic score. More accurate on subtle questions, costs a
-  little per search, and falls back to the heuristic on any error or timeout.
+* ``llm``: asks the fast LLM (``LLM_MODEL_FAST``, on OpenAI or on a gateway such as
+  OmniRoute) to score each candidate 0-3 and blends that with the heuristic score.
+  More accurate on subtle questions, costs a little per search, and falls back to the
+  heuristic on any error or timeout. It asks for JSON output, so check that the model
+  supports it with ``python -m scripts.check_llm``.
 * ``none``: keeps the fused search order.
 
 A cross-encoder model would also work here, but it means installing PyTorch
@@ -25,8 +27,11 @@ from app.config.settings import Settings
 from app.core.logging import get_logger
 from app.prompts.rerank_prompt import RERANK_PROMPT
 from app.rag.text import search_terms
+from app.services.llm_service import LLMConfigError, make_client, resolve_endpoint
 
 if TYPE_CHECKING:
+    import httpx2
+
     from app.rag.retriever import RetrievedChunk
 
 logger = get_logger(__name__)
@@ -134,16 +139,36 @@ class LLMReranker:
         return candidates + rest
 
 
-def build_reranker(settings: Settings) -> Reranker:
+def _build_llm_reranker(
+    settings: Settings, http_client: "httpx2.AsyncClient | None"
+) -> LLMReranker | str:
+    """The LLM reranker, or the reason it cannot be used."""
+    try:
+        endpoint = resolve_endpoint(settings, "chat")
+    except LLMConfigError as exc:
+        return str(exc)
+    if endpoint is None:
+        return "RERANKER=llm needs OPENAI_API_KEY or a gateway (LLM_BASE_URL)"
+    if not settings.llm_model_fast:
+        return "RERANKER=llm needs LLM_MODEL_FAST"
+    client = make_client(
+        endpoint,
+        timeout=settings.llm_timeout_seconds,
+        max_retries=1,
+        http_client=http_client,
+    )
+    return LLMReranker(client, settings.llm_model_fast)
+
+
+def build_reranker(
+    settings: Settings, *, http_client: "httpx2.AsyncClient | None" = None
+) -> Reranker:
+    """The reranker chosen by ``RERANKER``. ``http_client`` is for tests (a fake gateway)."""
     if settings.reranker == "none":
         return NoReranker()
     if settings.reranker == "llm":
-        key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else ""
-        if key and settings.llm_model_fast:
-            client = AsyncOpenAI(api_key=key, timeout=settings.llm_timeout_seconds, max_retries=1)
-            return LLMReranker(client, settings.llm_model_fast)
-        logger.warning(
-            "llm_reranker_unavailable",
-            reason="RERANKER=llm needs OPENAI_API_KEY and LLM_MODEL_FAST; using heuristic",
-        )
+        built = _build_llm_reranker(settings, http_client)
+        if isinstance(built, LLMReranker):
+            return built
+        logger.warning("llm_reranker_unavailable", reason=f"{built}; using heuristic")
     return HeuristicReranker()

@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 30.0
     llm_max_retries: int = 3
 
+    # --- Optional gateway (OmniRoute, LiteLLM, Ollama, ...) ----------------
+    # Any server that speaks the OpenAI API. Empty LLM_BASE_URL = OpenAI itself.
+    # See docs/omniroute.md and app/services/llm_service.py for how these combine.
+    llm_base_url: str = ""  # e.g. http://localhost:20128/v1
+    llm_api_key: SecretStr | None = None  # the gateway's key; empty = use OPENAI_API_KEY
+    # Embeddings may go elsewhere than chat. Empty = same place as chat.
+    embedding_base_url: str = ""
+    embedding_api_key: SecretStr | None = None
+
     # --- Tracing (used from Phase 4) -------------------------------------
     langsmith_tracing: bool = False
     langsmith_api_key: SecretStr | None = None

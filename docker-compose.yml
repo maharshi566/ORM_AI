@@ -1,6 +1,10 @@
 # ORM_AI local stack.
 #   Databases only (run the API with uvicorn on your machine):  docker compose up -d postgres redis
 #   Everything in Docker:                                       docker compose up --build
+#
+# Optional extras sit behind "profiles", so a plain `docker compose up` never starts them:
+#   Look inside PostgreSQL in your browser (Adminer):  docker compose --profile tools up -d adminer
+#   OmniRoute, a local gateway to many AI providers:   docker compose --profile gateway up -d omniroute
 name: orm_ai
 
 services:
@@ -58,7 +62,40 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ---- Optional: Adminer (profile "tools") ----------------------------------------------
+  # A web page for browsing the database: http://localhost:8080
+  # Pick "PostgreSQL" in the System box. Server: postgres. User, password and database are
+  # the POSTGRES_* values in .env. It is published on 127.0.0.1 only, because it gives full
+  # access to the data. Stop it when you are done: docker compose stop adminer
+  adminer:
+    profiles: ["tools"]
+    image: adminer:6
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "127.0.0.1:${ADMINER_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---- Optional: OmniRoute (profile "gateway") -------------------------------------------
+  # One local address (http://localhost:20128/v1) in front of many AI providers; see
+  # docs/omniroute.md. The dashboard is at http://localhost:20128. Published on 127.0.0.1
+  # only. Its provider logins and keys are stored in the omniroute_data volume.
+  # The version is pinned on purpose; to upgrade, change OMNIROUTE_VERSION in .env and run
+  # docker compose --profile gateway pull omniroute
+  omniroute:
+    profiles: ["gateway"]
+    image: diegosouzapw/omniroute:${OMNIROUTE_VERSION:-3.8.50}
+    ports:
+      - "127.0.0.1:${OMNIROUTE_PORT:-20128}:20128"
+    volumes:
+      - omniroute_data:/app/data
+    stop_grace_period: 40s
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
   chroma_data:
+  omniroute_data:
