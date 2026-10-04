@@ -1,0 +1,12 @@
+# Store text with LF line endings so Docker images and shell scripts work on every OS.
+* text=auto eol=lf
+
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.woff2 binary
+*.pdf  binary

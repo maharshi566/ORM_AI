@@ -1,0 +1,28 @@
+# Tool configuration for the backend (dependencies live in requirements*.txt).
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["data"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # import sorting
+    "B",     # bugbear
+    "UP",    # pyupgrade
+    "SIM",   # simplify
+    "ASYNC", # async pitfalls
+    "S",     # security (bandit)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra"

@@ -1,0 +1,64 @@
+# ORM_AI local stack.
+#   Databases only (run the API with uvicorn on your machine):  docker compose up -d postgres redis
+#   Everything in Docker:                                       docker compose up --build
+name: orm_ai
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orm_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orm_ai}
+      POSTGRES_DB: ${POSTGRES_DB:-orm_ai}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Inside Docker the services reach each other by service name, not localhost.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-orm_ai}:${POSTGRES_PASSWORD:-orm_ai}@postgres:5432/${POSTGRES_DB:-orm_ai}
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_PERSIST_DIR: /app/data/chroma
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - chroma_data:/app/data/chroma
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  chroma_data:
