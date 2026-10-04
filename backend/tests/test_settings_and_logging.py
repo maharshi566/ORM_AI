@@ -6,6 +6,17 @@ from app.graph.state import AgentState
 from app.prompts.triage_prompt import TRIAGE_PROMPT
 
 
+def test_tests_do_not_see_the_developers_own_settings() -> None:
+    # conftest hides real environment variables and .env files from every test. Without
+    # that, a developer with OPENAI_API_KEY set (in a shell or in backend/.env) got
+    # different test results from everyone else.
+    settings = Settings()
+
+    assert settings.openai_api_key is None
+    assert settings.embedding_model == "text-embedding-3-small"
+    assert settings.database_url.endswith("@localhost:5432/orm_ai")
+
+
 def test_empty_values_in_env_file_mean_not_set(tmp_path: Path) -> None:
     env = tmp_path / ".env"
     env.write_text(

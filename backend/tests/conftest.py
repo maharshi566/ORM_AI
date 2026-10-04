@@ -1,5 +1,7 @@
 """Shared test fixtures.
 
+* Every test: your own environment variables and ``.env`` files are hidden (see
+  ``_ignore_the_developers_own_settings``), so results are the same on every machine.
 * API tests: ``settings``, ``app``, ``client`` and patched health checks.
 * Tool tests: a seeded SQLite database (built once per session, copied for each
   test so every test starts from identical records), a ``registry`` and
@@ -9,8 +11,9 @@
 """
 
 import asyncio
+import os
 import shutil
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -20,7 +23,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config.paths import BACKEND_DIR
-from app.config.settings import Settings
+from app.config.settings import Settings, get_settings
 from app.main import create_app
 from app.models import Base
 from app.rag.embeddings import HashEmbedder
@@ -34,6 +37,30 @@ from app.tools.base import IST, ApprovalGrant, ToolContext
 from app.tools.registry import ToolRegistry
 
 KB_DIR = BACKEND_DIR / "knowledge_base"
+
+# ------------------------------------------------------------------ isolation
+
+
+@pytest.fixture(autouse=True)
+def _ignore_the_developers_own_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Tests must give the same result on every machine.
+
+    ``Settings`` reads real environment variables first and then ``.env`` files. A
+    developer with OPENAI_API_KEY in their shell or in ``backend/.env`` would otherwise
+    change what the tests see, and could make them call real services. So every test
+    starts with both hidden; a test that needs a setting passes it explicitly.
+    """
+    names = {name.lower() for name in Settings.model_fields}
+    for key in list(os.environ):  # Windows ignores case in names, Linux does not
+        if key.lower() in names:
+            monkeypatch.delenv(key)
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
 
 # ------------------------------------------------------------------ API tests
 

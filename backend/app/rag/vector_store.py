@@ -46,6 +46,7 @@ from chromadb.api.models.Collection import Collection
 from chromadb.config import Settings as ChromaSettings
 
 from app.rag.chunking import Chunk
+from app.rag.open_files import raise_open_file_limit
 
 COLLECTION_GROUPS: dict[str, frozenset[str]] = {
     "policies": frozenset({"policy"}),
@@ -59,6 +60,10 @@ _GROUP_OF = {category: group for group, cats in COLLECTION_GROUPS.items() for ca
 
 def group_for_category(category: str) -> str:
     return _GROUP_OF.get(category, "reference")
+
+
+# What ChromaDB says when an index is missing from its in-memory cache and not saved yet.
+LOST_INDEX = "Nothing found on disk"
 
 
 class VectorStoreError(RuntimeError):
@@ -140,9 +145,15 @@ class VectorStore:
     ) -> None:
         self.persist_dir = Path(persist_dir)
         self.embedding_model = embedding_model
-        self._client = client or chromadb.PersistentClient(
-            path=str(self.persist_dir), settings=ChromaSettings(anonymized_telemetry=False)
-        )
+        if client is None:
+            # ChromaDB sizes its in-memory index cache from the open-file limit and reads it
+            # once, when the client is created. Windows and macOS report small limits, which
+            # makes it forget indexes at random. See app/rag/open_files.py.
+            raise_open_file_limit()
+            client = chromadb.PersistentClient(
+                path=str(self.persist_dir), settings=ChromaSettings(anonymized_telemetry=False)
+            )
+        self._client = client
         self._collections: dict[str, Collection] = {}
 
     # ------------------------------------------------------------ helpers
@@ -154,7 +165,16 @@ class VectorStore:
         except VectorStoreError:
             raise
         except Exception as exc:  # ChromaDB raises many types, including sqlite errors
-            raise VectorStoreError(f"ChromaDB could not {action} ({type(exc).__name__}).") from exc
+            reason = " ".join(str(exc).split())[:300].rstrip(".")
+            message = f"ChromaDB could not {action} ({type(exc).__name__})"
+            if reason:
+                message += f": {reason}"
+            if LOST_INDEX in reason:
+                message += (
+                    ". ChromaDB dropped a search index from memory; restart the backend and "
+                    'it is rebuilt (docs/rag.md, "Nothing found on disk")'
+                )
+            raise VectorStoreError(message + ".") from exc
 
     def collection_name(self, group: str) -> str:
         return f"orm_{group}__{_slug(self.embedding_model)}"
