@@ -51,7 +51,7 @@ the action tools refuse to do the same thing twice.
 | `sessions`, `messages` | Phase 4 | conversations (short-term memory) |
 | `workflows`, `agent_runs` | Phase 4 | each request's run through the agent graph, step by step |
 | `tool_calls` | now | every tool call: arguments, result, status, latency |
-| `documents`, `document_chunks` | Phase 3 | the knowledge base after chunking |
+| `documents`, `document_chunks` | now | the knowledge base after chunking (written by `python -m scripts.ingest`; the vectors themselves live in ChromaDB) |
 | `approvals` | Phase 5 | actions waiting for, or decided by, a person |
 | `audit_logs` | now | who changed what, and who approved it |
 | `evaluations` | Phase 8 | evaluation results |

@@ -26,6 +26,17 @@ Investigation agent's job (Phase 4).
 | `get_case_history` | "Has this happened before?" | past cases and how they were resolved |
 | `check_supplier_price` | "Is the ghee cost right?" | quote from the (mock) supplier API vs recorded cost, price and MRP |
 
+## Knowledge tool: the Knowledge agent
+
+| Tool | Answers | Notable fields |
+| --- | --- | --- |
+| `search_knowledge` | "What does the shop's credit policy say about limits?" | passages with `citation` (`[POL-CREDIT-001 v2 §2. Credit limits]`), `status`, `trust`, `suspicious`; a ready-made `context` block; `found: false` with a note when nothing matches |
+
+Arguments: `query`, optional `categories`, `top_k` (1-10, default 5),
+`include_superseded` and `include_untrusted` (both off by default). The shop and
+the date come from the context, so a shop only ever sees its own profile and the
+rules in effect. Details: [rag.md](rag.md).
+
 ## Action tools: the Action agent
 
 | Tool | Does | Approval needed | Refuses when (policy) |

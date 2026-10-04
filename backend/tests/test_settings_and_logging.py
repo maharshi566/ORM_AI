@@ -1,7 +1,24 @@
+from pathlib import Path
+
 from app.config.settings import Settings
 from app.core.logging import MASK, mask_sensitive_fields
 from app.graph.state import AgentState
 from app.prompts.triage_prompt import TRIAGE_PROMPT
+
+
+def test_empty_values_in_env_file_mean_not_set(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text(
+        "RETRIEVAL_MIN_SIMILARITY=\nBUSINESS_DATE=\nOPENAI_API_KEY=\nRERANKER=llm\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=env)
+
+    assert settings.retrieval_min_similarity is None
+    assert settings.business_date is None
+    assert settings.openai_api_key is None
+    assert settings.reranker == "llm"
 
 
 def test_cors_origins_are_split_and_trimmed() -> None:

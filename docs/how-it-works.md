@@ -1,10 +1,11 @@
-# How ORM_AI works (Phases 0–2)
+# How ORM_AI works (Phases 0–3)
 
 This guide explains what is built so far and how the pieces fit together. Read it
 top to bottom once. After that, use the other guides as references:
 
 - [database.md](database.md): the tables, how the synthetic data is made, migrations
 - [tools.md](tools.md): every tool the agents can call, and the rules they enforce
+- [rag.md](rag.md): knowledge search, from documents to cited passages
 - [supabase.md](supabase.md): using Supabase as the database
 
 ## 1. The big picture
@@ -21,9 +22,11 @@ flowchart LR
     AG -->|tool calls only| REG[Tool registry]
     REG --> RT[Read tools]
     REG --> AT[Action tools]
+    REG --> KT[search_knowledge]
     RT --> DB[(PostgreSQL)]
     AT --> DB
     AT --> EXT[Mock supplier API<br/>Mock WhatsApp/SMS API]
+    KT --> CH[(ChromaDB)]
     API --> RD[(Redis)]
 ```
 
@@ -34,6 +37,7 @@ Built so far:
 | 0 Foundations | A running API with config, logging, request IDs, error handling, health check, Docker, tests, CI | `backend/app/main.py`, `core/`, `config/` |
 | 1 Data | 24 database tables, migrations, 91 days of synthetic shop data, 33 policy documents | `models/`, `migrations/`, `seed/`, `knowledge_base/` |
 | 2 Tools | 20 typed tools (13 read, 7 action), with approvals, idempotency, retries and logging | `tools/` |
+| 3 Knowledge search | Documents chunked and embedded into ChromaDB; hybrid search with citations; the `search_knowledge` tool; a 20-question evaluation | `rag/`, `scripts/ingest.py`, `evaluation/` |
 
 ## 2. What happens when a request comes in (Phase 0)
 
@@ -194,24 +198,48 @@ gateway. `tools/api_tools.py` simulates both. Setting `MOCK_API_FAILURE_MODE` in
 `not_found` or `random`. This drives the tool-failure tests now and the
 tool-failure evaluation cases in Phase 8.
 
-## 5. How to check everything yourself
+## 5. Knowledge search (Phase 3)
 
-From `backend/`, with Docker's Postgres and Redis running:
+The agents need the shop's *rules* as well as its records. Phase 3 makes the 33
+documents in `knowledge_base/` searchable by meaning, so a question like "can a
+staff member approve a Rs 1,500 refund?" finds `POL-RETURNS-001 §4. Approval`
+even though the words differ. [rag.md](rag.md) explains every step; in short:
+
+1. **Ingestion** (`python -m scripts.ingest`, run when documents change) splits each
+   document at its `##` headings into chunks, turns each chunk into a vector
+   (an *embedding*: a list of numbers whose closeness means "similar meaning"),
+   and stores them in **ChromaDB**. Unchanged chunks are skipped by their content
+   hash, so running it twice adds nothing.
+2. **Search** combines meaning search with keyword search, keeps only current
+   rules that apply to this shop today, drops anything not relevant enough (an
+   unrelated question returns nothing rather than a guess), and returns passages
+   labelled with citations such as `[POL-CREDIT-001 v2 §2. Credit limits]`.
+3. **Safety**: retrieved text is wrapped and marked as data, outside documents are
+   excluded unless asked for, and instruction-like text is flagged. The planted
+   supplier flyer is the test case.
+
+The Knowledge agent gets exactly one tool, `search_knowledge`. You can try the
+same search in the browser: <http://localhost:8000/docs> → `GET /api/knowledge/search`.
+
+## 6. How to check everything yourself
+
+From `backend/`, with Docker's Postgres and Redis running and `(.venv)` active:
 
 ```powershell
 alembic upgrade head            # create the 24 tables
 python -m scripts.seed          # load the synthetic shops
-pytest                          # 104 tests (+1 that needs TEST_DATABASE_URL)
+python -m scripts.ingest        # embed the knowledge base (needs OPENAI_API_KEY)
+python -m scripts.eval_retrieval  # retrieval quality: hit@5 must be at least 0.8
+pytest                          # the whole test suite, no API key needed
 uvicorn app.main:app --reload   # then open http://localhost:8000/docs
 ```
 
-To see the data, open `backend/data/seed/csv/*.csv` in Cursor, or connect a
+To see the data, open `backend/data/seed/csv/*.csv` in your editor, or connect a
 database viewer to `localhost:5432`.
 
-## 6. What comes next
+## 7. What comes next
 
 | Phase | Builds on | Adds |
 | --- | --- | --- |
-| 3 RAG | `knowledge_base/`, `documents` tables | Chunking, embeddings, ChromaDB, a `search_knowledge` tool with citations |
 | 4 Agent graph | the tools and their JSON schemas (`registry.schemas_for(agent)`) | LangGraph state graph, the 8 agents, `/api/chat` |
 | 5 Approval | `ApprovalGrant`, `approvals` and `audit_logs` tables | Policy gate, pause/resume with `interrupt()`, the validator |

@@ -3,7 +3,8 @@
 The documents the Knowledge agent searches: the shop's rules, procedures, supplier
 terms and FAQs. They are written to match the synthetic data, so the agents can
 check a record against a rule (for example a customer's balance against
-POL-CREDIT-001 v2). Phase 3 chunks and embeds them into ChromaDB.
+POL-CREDIT-001 v2). `python -m scripts.ingest` chunks and embeds them into
+ChromaDB; run it again after adding or editing a file (see `docs/rag.md`).
 
 | Folder | What it holds | Count |
 | --- | --- | --- |

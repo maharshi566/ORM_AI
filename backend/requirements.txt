@@ -16,7 +16,11 @@ alembic==1.20.0
 faker==40.40.0
 pyyaml==6.0.3
 
-# --- Added in later phases (uncomment as you reach them) ---
-# Phase 3: chromadb, langchain-text-splitters, pypdf
-# Phase 4: langgraph, langchain, langchain-openai, langgraph-checkpoint-postgres, tenacity, langsmith
+# --- Phase 3: knowledge search (RAG) ---
+chromadb==1.5.9       # vector database, runs inside the backend process
+openai==3.24.0        # embeddings now; chat models from Phase 4
+pypdf==6.19.0         # reads PDF documents in knowledge_base/
+
+# --- Added in later phases ---
+# Phase 4: langgraph, langchain, langchain-openai, langgraph-checkpoint-postgres, langsmith
 # Phase 6: slowapi, python-multipart

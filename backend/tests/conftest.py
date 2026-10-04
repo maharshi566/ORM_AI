@@ -4,6 +4,8 @@
 * Tool tests: a seeded SQLite database (built once per session, copied for each
   test so every test starts from identical records), a ``registry`` and
   ``make_ctx``, which builds a ToolContext for a given shop, approval and time.
+* Knowledge tests: ``kb_store``, the real knowledge base ingested once with the
+  offline hash embedder (no API key, no network), and a ``knowledge`` retriever.
 """
 
 import asyncio
@@ -17,14 +19,21 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.config.paths import BACKEND_DIR
 from app.config.settings import Settings
 from app.main import create_app
 from app.models import Base
+from app.rag.embeddings import HashEmbedder
+from app.rag.ingestion import ingest_knowledge_base
+from app.rag.retriever import KnowledgeRetriever
+from app.rag.vector_store import VectorStore
 from app.seed.generator import Dataset, generate
 from app.seed.loader import load_dataset
 from app.tools.api_tools import FaultInjector, MockMessagingAPI, MockSupplierAPI
 from app.tools.base import IST, ApprovalGrant, ToolContext
 from app.tools.registry import ToolRegistry
+
+KB_DIR = BACKEND_DIR / "knowledge_base"
 
 # ------------------------------------------------------------------ API tests
 
@@ -127,9 +136,16 @@ async def make_ctx(
         approval: ApprovalGrant | None = None,
         now: datetime = ANCHOR_NOON,
         faults: FaultInjector | None = None,
+        knowledge: KnowledgeRetriever | None = None,
     ) -> ToolContext:
         session = session_factory()
         sessions.append(session)
+        clients: dict[str, object] = {
+            "supplier_api": MockSupplierAPI(faults),
+            "messaging_api": MockMessagingAPI(faults),
+        }
+        if knowledge is not None:
+            clients["knowledge"] = knowledge
         return ToolContext(
             session=session,
             shop_id=shop_id,
@@ -137,12 +153,29 @@ async def make_ctx(
             now=now,
             approval=approval,
             log_session_factory=session_factory,
-            clients={
-                "supplier_api": MockSupplierAPI(faults),
-                "messaging_api": MockMessagingAPI(faults),
-            },
+            clients=clients,
         )
 
     yield factory
     for session in sessions:
         await session.close()
+
+
+# ------------------------------------------------------------ knowledge tests
+
+
+@pytest.fixture(scope="session")
+def kb_store(tmp_path_factory: pytest.TempPathFactory) -> VectorStore:
+    """The real knowledge base, ingested once with the offline hash embedder.
+
+    Treat it as read-only: tests that change a store build their own.
+    """
+    embedder = HashEmbedder()
+    store = VectorStore(tmp_path_factory.mktemp("chroma"), embedder.model)
+    asyncio.run(ingest_knowledge_base(kb_dir=KB_DIR, store=store, embedder=embedder))
+    return store
+
+
+@pytest.fixture
+def knowledge(kb_store: VectorStore) -> KnowledgeRetriever:
+    return KnowledgeRetriever(kb_store, HashEmbedder())

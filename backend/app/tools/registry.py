@@ -28,11 +28,14 @@ from app.tools.api_tools import API_TOOLS
 from app.tools.base import ToolContext, ToolError, ToolErrorCode, ToolResult, ToolSpec
 from app.tools.business_tools import BUSINESS_TOOLS
 from app.tools.database_tools import DATABASE_TOOLS
+from app.tools.knowledge_tools import KNOWLEDGE_TOOLS
 
 logger = get_logger(__name__)
 
 READ_TOOL_NAMES = [spec.name for spec in DATABASE_TOOLS + API_TOOLS]
 ACTION_TOOL_NAMES = [spec.name for spec in BUSINESS_TOOLS]
+KNOWLEDGE_TOOL_NAMES = [spec.name for spec in KNOWLEDGE_TOOLS]
+ALL_TOOLS = DATABASE_TOOLS + API_TOOLS + BUSINESS_TOOLS + KNOWLEDGE_TOOLS
 
 # Which agent may call which tool. Agents not listed here get no tools at all, so
 # the Supervisor, Triage, Investigation, Validator and Response agents can never
@@ -40,7 +43,7 @@ ACTION_TOOL_NAMES = [spec.name for spec in BUSINESS_TOOLS]
 AGENT_TOOLS: dict[str, list[str]] = {
     "data_retrieval": READ_TOOL_NAMES,
     "action": ACTION_TOOL_NAMES,
-    "knowledge": [],  # gets search_knowledge in Phase 3
+    "knowledge": KNOWLEDGE_TOOL_NAMES,
 }
 
 
@@ -52,7 +55,7 @@ class ToolRegistry:
         agent_tools: dict[str, list[str]] | None = None,
         retry_backoff_seconds: float = 0.3,
     ) -> None:
-        all_specs = specs if specs is not None else DATABASE_TOOLS + API_TOOLS + BUSINESS_TOOLS
+        all_specs = specs if specs is not None else ALL_TOOLS
         self._specs = {spec.name: spec for spec in all_specs}
         self._agent_tools = agent_tools if agent_tools is not None else AGENT_TOOLS
         self._backoff = retry_backoff_seconds

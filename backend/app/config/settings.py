@@ -19,6 +19,9 @@ class Settings(BaseSettings):
         env_file=("../.env", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        # "OPENAI_API_KEY=" or "BUSINESS_DATE=" with nothing after it means "not set",
+        # so the default applies instead of failing to parse an empty value.
+        env_ignore_empty=True,
     )
 
     # --- App -------------------------------------------------------------
@@ -39,9 +42,19 @@ class Settings(BaseSettings):
     # Supabase's port 6543. It turns off prepared statements, which those poolers break.
     db_transaction_pooler: bool = False
     redis_url: str = "redis://localhost:6379/0"
-    chroma_persist_dir: str = "./data/chroma"  # used from Phase 3
 
-    # --- LLM (used from Phase 4) -----------------------------------------
+    # --- Knowledge base and retrieval (Phase 3) ---------------------------
+    # Relative paths start at backend/ (see app/config/paths.py).
+    knowledge_base_dir: str = "./knowledge_base"
+    chroma_persist_dir: str = "./data/chroma"
+    # heuristic (default, free), llm (scores results with LLM_MODEL_FAST), or none
+    reranker: Literal["heuristic", "llm", "none"] = "heuristic"
+    # Results less similar than this (and without the question's keywords) count as
+    # "not found". Empty = the embedding model's default; the retrieval evaluation
+    # prints the range to choose from.
+    retrieval_min_similarity: float | None = None
+
+    # --- LLM (embeddings from Phase 3, agents from Phase 4) ----------------
     openai_api_key: SecretStr | None = None
     llm_model_fast: str = ""  # triage, validation, LLM-as-judge
     llm_model_smart: str = ""  # investigation, final response

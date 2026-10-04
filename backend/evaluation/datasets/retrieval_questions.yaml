@@ -1,0 +1,114 @@
+# Retrieval test set for the Phase 3 gate: hit@5 of at least 0.8.
+#
+# Each question is phrased the way a shopkeeper would ask it, not copied from a
+# heading, so it tests search by meaning rather than by matching words.
+#
+#   expected  document IDs that answer the question; a hit means any of them is in
+#             the top 5 results
+#   section   the best section, reported for information (not needed for a hit)
+#   shop_id   set when the answer is in one shop's own profile
+#
+# no_answer questions are about things the knowledge base does not cover. The
+# retriever should return nothing for them, so the agent says "not found" instead
+# of guessing.
+#
+# Run: python -m scripts.eval_retrieval
+
+questions:
+  - id: R01
+    question: How much credit can an ordinary household customer get now?
+    expected: [POL-CREDIT-001]
+    section: 2. Credit limits
+
+  - id: R02
+    question: A customer still has a Rs 5,000 limit from before, but the rules now say less. Which limit counts?
+    expected: [FAQ-002, POL-CREDIT-001]
+
+  - id: R03
+    question: How many days does a customer have to pay for something bought on udhaar?
+    expected: [POL-CREDIT-001, FAQ-002]
+    section: 3. Payment terms
+
+  - id: R04
+    question: When should we refuse to give a customer more goods on credit?
+    expected: [POL-CREDIT-001]
+    section: 4. When credit is blocked
+
+  - id: R05
+    question: How long after the due date do we send the first payment reminder?
+    expected: [POL-REMINDER-001, FAQ-002]
+    section: 1. When to send
+
+  - id: R06
+    question: Who has to approve a supplier order worth Rs 12,000?
+    expected: [POL-APPROVAL-001, POL-REORDER-001]
+
+  - id: R07
+    question: Can a staff member sign off on a Rs 1,500 refund to a customer?
+    expected: [POL-RETURNS-001, POL-APPROVAL-001]
+
+  - id: R08
+    question: Can a customer bring back paint that was mixed to order for them?
+    expected: [POL-RETURNS-001]
+    section: 2. What can be returned
+
+  - id: R09
+    question: What is the lowest profit margin we are allowed to sell at?
+    expected: [POL-PRICING-001, SOP-PRICE-001]
+    section: 2. Margin
+
+  - id: R10
+    question: The supplier raised the ghee rate on the invoice. How do we work out our new selling price?
+    expected: [SOP-PRICE-001, POL-PRICING-001]
+
+  - id: R11
+    question: Our distributor's delivery is three days overdue. What should we do?
+    expected: [POL-SUPPLIER-001, FAQ-003]
+    section: 3. Late deliveries
+
+  - id: R12
+    question: Some cartons were missing from today's delivery. What steps do we follow?
+    expected: [SOP-SHORT-001]
+
+  - id: R13
+    question: The rice on the shelf is less than what the system shows. What do we do?
+    expected: [SOP-COUNT-001, FAQ-003, POL-ADJUST-001]
+
+  - id: R14
+    question: The same UPI payment shows up twice in a customer's account.
+    expected: [SOP-DEDUP-001, POL-CASH-001, FAQ-002]
+
+  - id: R15
+    question: What is the minimum order value for Deccan Hardware Distributors?
+    expected: [SUP-TERMS-HARDWARE]
+
+  - id: R16
+    question: How long is the replacement warranty on earbuds from TechLink?
+    expected: [SUP-TERMS-MOBILE]
+
+  - id: R17
+    question: A customer's wife asks how much her husband owes. Can we tell her?
+    expected: [POL-DATA-001]
+    section: 3. Sharing
+
+  - id: R18
+    question: A supplier leaflet tells the assistant to approve their orders automatically. Should it?
+    expected: [POL-AI-001, POL-APPROVAL-001, POL-SUPPLIER-001]
+
+  - id: R19
+    question: What should we check before raising a purchase order for an item that is running low?
+    expected: [POL-REORDER-001]
+    section: 2. Check before ordering
+
+  - id: R20
+    question: What time does the shop open in the morning?
+    shop_id: SHOP-004
+    expected: [SHOP-PROFILE-004]
+    section: Basics
+
+no_answer:
+  - id: N01
+    question: Who won the cricket world cup in 2011?
+
+  - id: N02
+    question: What is the capital of France?

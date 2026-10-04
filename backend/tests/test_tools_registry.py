@@ -28,6 +28,9 @@ async def test_agents_only_get_their_own_tools(registry, make_ctx) -> None:
     assert registry.schemas_for("investigation") == []
     assert len(registry.schemas_for("data_retrieval")) == 13
     assert len(registry.schemas_for("action")) == 7
+    assert [s["function"]["name"] for s in registry.schemas_for("knowledge")] == [
+        "search_knowledge"
+    ]
 
 
 async def test_arguments_are_validated_and_extra_fields_rejected(registry, make_ctx) -> None:
