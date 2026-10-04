@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
-    init_engine(settings.database_url)
+    init_engine(settings.database_url, transaction_pooler=settings.db_transaction_pooler)
     init_redis(settings.redis_url)
     logger.info("app_started", environment=settings.app_env, version=settings.app_version)
     try:

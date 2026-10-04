@@ -1,0 +1,103 @@
+id,shop_id,name,phone,locality,customer_type,credit_allowed,credit_limit,is_active,notes,joined_on,created_at
+CUST-0001,SHOP-001,Aryan Maharaj,+91-00000-30001,Market Street,household,True,3000.00,True,,2025-08-25,2025-08-25T10:00:00+05:30
+CUST-0002,SHOP-001,Udant Dewan,+91-00000-30002,Market Street,household,True,3000.00,True,,2026-02-27,2026-02-27T10:00:00+05:30
+CUST-0003,SHOP-001,Gagan Sami,+91-00000-30003,Old Town,household,True,5000.00,True,Credit limit set in Nov 2025.,2025-11-03,2024-06-14T10:00:00+05:30
+CUST-0004,SHOP-001,Ayushman Chander,+91-00000-30004,College Road,household,True,3000.00,True,,2024-02-28,2024-02-28T10:00:00+05:30
+CUST-0005,SHOP-001,Viraj Tiwari,+91-00000-30005,Station Road,household,False,0.00,True,,2026-02-18,2026-02-18T10:00:00+05:30
+CUST-0006,SHOP-001,Rushil Saini,+91-00000-30006,Green Park,household,False,0.00,True,,2024-05-16,2024-05-16T10:00:00+05:30
+CUST-0007,SHOP-001,Saumya Mall,+91-00000-30007,Market Street,household,True,3000.00,True,,2025-05-28,2025-05-28T10:00:00+05:30
+CUST-0008,SHOP-001,Nathaniel Sami,+91-00000-30008,Station Road,household,False,0.00,True,,2025-10-07,2025-10-07T10:00:00+05:30
+CUST-0009,SHOP-001,Arunima Dugal,+91-00000-30009,Lake View Colony,household,True,3000.00,True,,2024-07-16,2024-07-16T10:00:00+05:30
+CUST-0010,SHOP-001,Gayathri Chaudry,+91-00000-30010,Old Town,household,True,3000.00,True,,2025-02-14,2025-02-14T10:00:00+05:30
+CUST-0011,SHOP-001,Lajita Chatterjee,+91-00000-30011,Gandhi Nagar,household,False,0.00,True,,2025-10-11,2025-10-11T10:00:00+05:30
+CUST-0012,SHOP-001,Hemangini Lalla,+91-00000-30012,Teachers Colony,household,False,0.00,True,,2024-05-28,2024-05-28T10:00:00+05:30
+CUST-0013,SHOP-001,Tripti Yadav,+91-00000-30013,Lake View Colony,household,True,3000.00,True,,2024-05-01,2024-05-01T10:00:00+05:30
+CUST-0014,SHOP-001,Kritika Brar,+91-00000-30014,Green Park,household,False,0.00,True,,2024-12-28,2024-12-28T10:00:00+05:30
+CUST-0015,SHOP-001,Janaki Handa,+91-00000-30015,Station Road,household,False,0.00,True,,2025-03-27,2025-03-27T10:00:00+05:30
+CUST-0016,SHOP-001,Chakradev Kari,+91-00000-30016,Station Road,household,False,0.00,True,,2026-05-22,2026-05-22T10:00:00+05:30
+CUST-0017,SHOP-001,Fariq Kaul,+91-00000-30017,Lake View Colony,household,True,3000.00,True,,2024-05-24,2024-05-24T10:00:00+05:30
+CUST-0018,SHOP-001,Lajita Mall,+91-00000-30018,College Road,household,True,3000.00,True,,2025-11-11,2025-11-11T10:00:00+05:30
+CUST-0019,SHOP-001,Janya Gaba,+91-00000-30019,Teachers Colony,household,True,3000.00,True,,2026-02-08,2026-02-08T10:00:00+05:30
+CUST-0020,SHOP-001,Isha Kadakia,+91-00000-30020,Green Park,household,False,0.00,True,,2026-03-07,2026-03-07T10:00:00+05:30
+CUST-0021,SHOP-001,Ekbal Garg,+91-00000-30021,Lake View Colony,household,False,0.00,True,,2025-12-15,2025-12-15T10:00:00+05:30
+CUST-0022,SHOP-001,Nihal Shere,+91-00000-30022,Teachers Colony,household,True,3000.00,True,,2024-07-15,2024-07-15T10:00:00+05:30
+CUST-0023,SHOP-001,Anamika Kanda,+91-00000-30023,Market Street,household,True,3000.00,True,,2026-05-12,2026-05-12T10:00:00+05:30
+CUST-0024,SHOP-001,Daksh Karnik,+91-00000-30024,Station Road,household,False,0.00,True,,2025-06-29,2025-06-29T10:00:00+05:30
+CUST-0025,SHOP-001,Diya Rattan,+91-00000-30025,Green Park,household,True,3000.00,True,,2024-10-26,2024-10-26T10:00:00+05:30
+CUST-0026,SHOP-002,Dominic Kakar,+91-00000-30026,Old Town,contractor,True,15000.00,True,,2025-06-05,2025-06-05T10:00:00+05:30
+CUST-0027,SHOP-002,Simon Tata,+91-00000-30027,Station Road,contractor,True,15000.00,True,,2024-03-05,2024-03-05T10:00:00+05:30
+CUST-0028,SHOP-002,Tara Dhar,+91-00000-30028,Market Street,contractor,True,15000.00,True,,2025-02-14,2025-02-14T10:00:00+05:30
+CUST-0029,SHOP-002,Liam Koshy,+91-00000-30029,Gandhi Nagar,contractor,True,15000.00,True,,2024-01-28,2024-01-28T10:00:00+05:30
+CUST-0030,SHOP-002,Priya Rastogi,+91-00000-30030,Gandhi Nagar,household,True,3000.00,True,,2025-04-18,2025-04-18T10:00:00+05:30
+CUST-0031,SHOP-002,Theodore Devi,+91-00000-30031,Lake View Colony,contractor,True,15000.00,True,,2025-02-22,2025-02-22T10:00:00+05:30
+CUST-0032,SHOP-002,Gavin Batta,+91-00000-30032,Gandhi Nagar,contractor,True,15000.00,True,,2026-04-04,2026-04-04T10:00:00+05:30
+CUST-0033,SHOP-002,Michael Dutta,+91-00000-30033,Gandhi Nagar,household,False,0.00,True,,2025-12-23,2025-12-23T10:00:00+05:30
+CUST-0034,SHOP-002,Devansh Rajan,+91-00000-30034,Market Street,household,True,3000.00,True,,2026-01-31,2026-01-31T10:00:00+05:30
+CUST-0035,SHOP-002,Upadhriti Wadhwa,+91-00000-30035,Lake View Colony,household,False,0.00,True,,2025-07-14,2025-07-14T10:00:00+05:30
+CUST-0036,SHOP-002,Advay Contractor,+91-00000-30036,Green Park,contractor,True,15000.00,True,,2025-07-30,2025-07-30T10:00:00+05:30
+CUST-0037,SHOP-002,Harini Choudhury,+91-00000-30037,Station Road,household,False,0.00,True,,2026-02-20,2026-02-20T10:00:00+05:30
+CUST-0038,SHOP-002,Radhika Dugar,+91-00000-30038,Teachers Colony,household,False,0.00,True,,2025-09-25,2025-09-25T10:00:00+05:30
+CUST-0039,SHOP-002,Aarush Lall,+91-00000-30039,Gandhi Nagar,household,False,0.00,True,,2024-08-02,2024-08-02T10:00:00+05:30
+CUST-0040,SHOP-002,Yashica Cherian,+91-00000-30040,College Road,contractor,True,15000.00,True,,2024-11-13,2024-11-13T10:00:00+05:30
+CUST-0041,SHOP-002,Yashica Issac,+91-00000-30041,Lake View Colony,household,True,3000.00,True,,2024-08-22,2024-08-22T10:00:00+05:30
+CUST-0042,SHOP-002,Kashvi Edwin,+91-00000-30042,Gandhi Nagar,household,False,0.00,True,,2026-04-18,2026-04-18T10:00:00+05:30
+CUST-0043,SHOP-002,Ekiya Suresh,+91-00000-30043,Old Town,contractor,True,15000.00,True,,2024-06-10,2024-06-10T10:00:00+05:30
+CUST-0044,SHOP-002,Isaac Patil,+91-00000-30044,College Road,household,False,0.00,True,,2024-10-14,2024-10-14T10:00:00+05:30
+CUST-0045,SHOP-002,Wriddhish Bhardwaj,+91-00000-30045,Teachers Colony,contractor,True,15000.00,True,,2026-04-23,2026-04-23T10:00:00+05:30
+CUST-0046,SHOP-003,Farhan Chada,+91-00000-30046,College Road,student,False,0.00,True,,2025-04-12,2025-04-12T10:00:00+05:30
+CUST-0047,SHOP-003,Bright Minds Tuition Centre,+91-00000-30047,Old Town,institution,True,10000.00,True,,2024-03-23,2024-03-23T10:00:00+05:30
+CUST-0048,SHOP-003,Ekapad Walia,+91-00000-30048,Market Street,student,False,0.00,True,,2025-02-06,2025-02-06T10:00:00+05:30
+CUST-0049,SHOP-003,Kabir Soman,+91-00000-30049,Gandhi Nagar,household,False,0.00,True,,2025-10-17,2025-10-17T10:00:00+05:30
+CUST-0050,SHOP-003,Alka Wable,+91-00000-30050,Teachers Colony,household,False,0.00,True,,2025-08-21,2025-08-21T10:00:00+05:30
+CUST-0051,SHOP-003,Siddharth Zacharia,+91-00000-30051,Lake View Colony,student,False,0.00,True,,2025-12-02,2025-12-02T10:00:00+05:30
+CUST-0052,SHOP-003,Devika Rastogi,+91-00000-30052,Station Road,student,False,0.00,True,,2025-03-13,2025-03-13T10:00:00+05:30
+CUST-0053,SHOP-003,Sunrise Public School,+91-00000-30053,Market Street,institution,True,10000.00,True,,2024-02-28,2024-02-28T10:00:00+05:30
+CUST-0054,SHOP-003,Raksha Varughese,+91-00000-30054,Lake View Colony,student,False,0.00,True,,2026-01-26,2026-01-26T10:00:00+05:30
+CUST-0055,SHOP-003,Jai Kota,+91-00000-30055,Old Town,student,False,0.00,True,,2025-11-18,2025-11-18T10:00:00+05:30
+CUST-0056,SHOP-003,Devansh Nigam,+91-00000-30056,Lake View Colony,student,False,0.00,True,,2025-07-26,2025-07-26T10:00:00+05:30
+CUST-0057,SHOP-003,Victor Kannan,+91-00000-30057,Green Park,student,False,0.00,True,,2025-10-27,2025-10-27T10:00:00+05:30
+CUST-0058,SHOP-003,Little Flower School,+91-00000-30058,Market Street,institution,True,10000.00,True,,2025-10-15,2025-10-15T10:00:00+05:30
+CUST-0059,SHOP-003,Ekavir Bhargava,+91-00000-30059,Station Road,household,False,0.00,True,,2024-04-07,2024-04-07T10:00:00+05:30
+CUST-0060,SHOP-003,Ekansh Balay,+91-00000-30060,Market Street,household,False,0.00,True,,2025-04-19,2025-04-19T10:00:00+05:30
+CUST-0061,SHOP-003,Ekavir Varkey,+91-00000-30061,Green Park,student,False,0.00,True,,2024-06-20,2024-06-20T10:00:00+05:30
+CUST-0062,SHOP-003,Arya Sunder,+91-00000-30062,Teachers Colony,student,False,0.00,True,,2024-07-19,2024-07-19T10:00:00+05:30
+CUST-0063,SHOP-003,Kevin Solanki,+91-00000-30063,Green Park,household,False,0.00,True,,2025-12-22,2025-12-22T10:00:00+05:30
+CUST-0064,SHOP-003,Urvashi Ray,+91-00000-30064,Market Street,household,False,0.00,True,,2024-08-30,2024-08-30T10:00:00+05:30
+CUST-0065,SHOP-003,Girindra Chatterjee,+91-00000-30065,Station Road,student,False,0.00,True,,2024-11-26,2024-11-26T10:00:00+05:30
+CUST-0066,SHOP-004,Irya Sampath,+91-00000-30066,Old Town,household,False,0.00,True,,2026-03-29,2026-03-29T10:00:00+05:30
+CUST-0067,SHOP-004,Unni Bhagat,+91-00000-30067,Old Town,household,True,2000.00,True,,2025-03-29,2025-03-29T10:00:00+05:30
+CUST-0068,SHOP-004,Darsh Rau,+91-00000-30068,Old Town,household,True,2000.00,True,,2024-04-22,2024-04-22T10:00:00+05:30
+CUST-0069,SHOP-004,Ikbal Kothari,+91-00000-30069,Gandhi Nagar,household,True,2000.00,True,,2025-01-21,2025-01-21T10:00:00+05:30
+CUST-0070,SHOP-004,Ranveer Yadav,+91-00000-30070,Gandhi Nagar,household,False,0.00,True,,2026-01-23,2026-01-23T10:00:00+05:30
+CUST-0071,SHOP-004,Logan Sami,+91-00000-30071,College Road,household,True,2000.00,True,,2025-02-15,2025-02-15T10:00:00+05:30
+CUST-0072,SHOP-004,Arya Shere,+91-00000-30072,Old Town,household,True,2000.00,True,,2024-04-14,2024-04-14T10:00:00+05:30
+CUST-0073,SHOP-004,Faqid Savant,+91-00000-30073,Teachers Colony,household,False,0.00,True,,2026-04-10,2026-04-10T10:00:00+05:30
+CUST-0074,SHOP-004,Chandresh Zachariah,+91-00000-30074,Gandhi Nagar,household,False,0.00,True,,2025-11-10,2025-11-10T10:00:00+05:30
+CUST-0075,SHOP-004,Girik Khalsa,+91-00000-30075,Green Park,household,True,2000.00,True,,2025-10-22,2025-10-22T10:00:00+05:30
+CUST-0076,SHOP-004,Niharika Sunder,+91-00000-30076,Station Road,household,True,2000.00,True,,2025-07-19,2025-07-19T10:00:00+05:30
+CUST-0077,SHOP-004,Tanay Rattan,+91-00000-30077,Market Street,household,False,0.00,True,,2026-03-17,2026-03-17T10:00:00+05:30
+CUST-0078,SHOP-004,Nitesh Raghavan,+91-00000-30078,Teachers Colony,household,True,2000.00,True,,2026-04-21,2026-04-21T10:00:00+05:30
+CUST-0079,SHOP-004,Madhavi Lanka,+91-00000-30079,Station Road,household,True,2000.00,True,,2025-01-17,2025-01-17T10:00:00+05:30
+CUST-0080,SHOP-004,Bhavika Sampath,+91-00000-30080,Lake View Colony,household,True,2000.00,True,,2024-05-12,2024-05-12T10:00:00+05:30
+CUST-0081,SHOP-004,Mohammed Gupta,+91-00000-30081,Lake View Colony,household,True,2000.00,True,,2026-03-06,2026-03-06T10:00:00+05:30
+CUST-0082,SHOP-004,Teerth Bhardwaj,+91-00000-30082,College Road,household,True,2000.00,True,,2025-07-05,2025-07-05T10:00:00+05:30
+CUST-0083,SHOP-004,Dipta Bhandari,+91-00000-30083,Lake View Colony,household,False,0.00,True,,2024-06-14,2024-06-14T10:00:00+05:30
+CUST-0084,SHOP-004,Vansha Thakkar,+91-00000-30084,Market Street,household,True,2000.00,True,,2024-11-11,2024-11-11T10:00:00+05:30
+CUST-0085,SHOP-004,Dakshesh Trivedi,+91-00000-30085,Market Street,household,True,2000.00,True,,2024-06-24,2024-06-24T10:00:00+05:30
+CUST-0086,SHOP-005,Quincy Biswas,+91-00000-30086,Teachers Colony,household,False,0.00,True,,2024-04-30,2024-04-30T10:00:00+05:30
+CUST-0087,SHOP-005,Wahab Raval,+91-00000-30087,Teachers Colony,household,False,0.00,True,,2025-11-17,2025-11-17T10:00:00+05:30
+CUST-0088,SHOP-005,Yatin Baral,+91-00000-30088,Lake View Colony,household,False,0.00,True,,2024-05-22,2024-05-22T10:00:00+05:30
+CUST-0089,SHOP-005,Oni Virk,+91-00000-30089,College Road,household,False,0.00,True,,2024-06-07,2024-06-07T10:00:00+05:30
+CUST-0090,SHOP-005,Advika Jayaraman,+91-00000-30090,Green Park,household,False,0.00,True,,2024-04-23,2024-04-23T10:00:00+05:30
+CUST-0091,SHOP-005,William Lanka,+91-00000-30091,Gandhi Nagar,household,False,0.00,True,,2025-11-26,2025-11-26T10:00:00+05:30
+CUST-0092,SHOP-005,Karan Mital,+91-00000-30092,Gandhi Nagar,household,True,2000.00,True,,2024-08-27,2024-08-27T10:00:00+05:30
+CUST-0093,SHOP-005,Diya Bora,+91-00000-30093,Old Town,household,False,0.00,True,,2024-11-08,2024-11-08T10:00:00+05:30
+CUST-0094,SHOP-005,Andra Mobile Repairs,+91-00000-30094,Old Town,business,True,5000.00,True,,2024-10-08,2024-10-08T10:00:00+05:30
+CUST-0095,SHOP-005,Harish Borah,+91-00000-30095,Market Street,household,False,0.00,True,,2024-04-12,2024-04-12T10:00:00+05:30
+CUST-0096,SHOP-005,Yashawini Lanka,+91-00000-30096,College Road,household,False,0.00,True,,2026-03-18,2026-03-18T10:00:00+05:30
+CUST-0097,SHOP-005,Ikshita Biswas,+91-00000-30097,Lake View Colony,household,False,0.00,True,,2024-06-09,2024-06-09T10:00:00+05:30
+CUST-0098,SHOP-005,Konda Mobile Repairs,+91-00000-30098,Market Street,business,True,5000.00,True,,2024-08-31,2024-08-31T10:00:00+05:30
+CUST-0099,SHOP-005,Bhavani Dugar,+91-00000-30099,College Road,household,False,0.00,True,,2024-02-07,2024-02-07T10:00:00+05:30
+CUST-0100,SHOP-005,Chasmum Wadhwa,+91-00000-30100,Green Park,household,False,0.00,True,,2025-08-11,2025-08-11T10:00:00+05:30
+CUST-0101,SHOP-003,Priya Sharma,+91-00000-30101,Teachers Colony,household,False,0.00,True,,2025-08-26,2025-08-26T16:00:00+05:30
+CUST-0102,SHOP-003,Priya S.,+91-00000-30101,Teachers Colony,household,False,0.00,True,Added at the counter.,2026-09-10,2026-09-10T16:00:00+05:30

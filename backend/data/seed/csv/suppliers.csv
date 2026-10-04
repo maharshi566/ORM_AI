@@ -1,0 +1,13 @@
+id,name,contact_person,phone,city,categories,payment_terms_days,lead_time_days,min_order_value,is_active,created_at
+SUP-001,Shree Balaji Traders,Venkat Rao,+91-00000-20001,Demo City,"grocery,staples",15,2,2000.00,True,2026-07-02T08:00:00+05:30
+SUP-002,Annapurna Foods Distributors,Lalitha Devi,+91-00000-20002,Demo City,"grocery,spices,oil",7,3,1500.00,True,2026-07-02T08:00:00+05:30
+SUP-003,Metro FMCG Agency,Prakash Jain,+91-00000-20003,Demo City,"household,personal_care,snacks",30,4,3000.00,True,2026-07-02T08:00:00+05:30
+SUP-004,Deccan Hardware Distributors,Mohammed Ali,+91-00000-20004,Demo City,"hardware,electrical,cement",30,5,5000.00,True,2026-07-02T08:00:00+05:30
+SUP-005,Colorline Paints Depot,Harish Kumar,+91-00000-20005,Demo City,paints,30,4,5000.00,True,2026-07-02T08:00:00+05:30
+SUP-006,Pragati Pipes & Fittings,Sunil Verma,+91-00000-20006,Demo City,plumbing,15,3,2000.00,True,2026-07-02T08:00:00+05:30
+SUP-007,Saraswati Book Depot,Geeta Iyer,+91-00000-20007,Demo City,"stationery,notebooks",30,5,1500.00,True,2026-07-02T08:00:00+05:30
+SUP-008,PaperWorld Wholesale,Rohit Agarwal,+91-00000-20008,Demo City,"paper,office",15,2,1000.00,True,2026-07-02T08:00:00+05:30
+SUP-009,Nandi Milk Co-operative,Shankar Gowda,+91-00000-20009,Demo City,dairy,7,1,500.00,True,2026-07-02T08:00:00+05:30
+SUP-010,Golden Crust Bakery Supplies,Joseph Mathew,+91-00000-20010,Demo City,bakery,7,1,500.00,True,2026-07-02T08:00:00+05:30
+SUP-011,TechLink Accessories Wholesale,Arjun Mehta,+91-00000-20011,Demo City,"mobile_accessories,audio",30,6,3000.00,True,2026-07-02T08:00:00+05:30
+SUP-012,Volt Mobile Distributors,Farhan Siddiqui,+91-00000-20012,Demo City,"mobile_accessories,chargers",15,4,2000.00,True,2026-07-02T08:00:00+05:30

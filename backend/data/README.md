@@ -1,10 +1,13 @@
 # data/
 
-Generated and local-only data. Nothing here is committed except this file and `seed/`.
+Generated and local-only data.
 
-| Folder | What goes here | Phase |
+| Path | What it is | Committed? |
 | --- | --- | --- |
-| `seed/` | Synthetic shop data as CSV or JSON: products, suppliers, sales, stock movements, customer credit | 1 |
-| `chroma/` | ChromaDB's on-disk vector store, created by `scripts/ingest.py` (git-ignored) | 3 |
+| `seed/EDGE_CASES.md` | The 17 planted situations the agents must handle, with record IDs | yes |
+| `seed/csv/` | One CSV per table, exported by `python -m scripts.seed --export-dir data/seed/csv` | yes (for browsing) |
+| `chroma/` | ChromaDB's on-disk vector store, created by `scripts/ingest.py` (Phase 3) | no |
 
-Never put real customer data in this folder.
+The CSVs and EDGE_CASES.md are regenerated every time you run the seed command with
+`--export-dir`. If you change the generator, re-export so they stay in step with the
+database. Never put real customer data in this folder.

@@ -2,7 +2,9 @@
 
 A multi-agent AI assistant that helps local shopkeepers keep their records organised and detailed.
 
-> **Status:** Phase 0 (foundations) is done. The API, config, logging, Docker setup, tests and CI work. The agents, RAG pipeline and UI pages are placeholders, filled in phase by phase. See [Roadmap](#roadmap).
+> **Status:** Stage A is done (Phases 0–2): the API foundations, 24 database tables with migrations, 91 days of synthetic shop data with 17 planted edge cases, 33 knowledge-base documents, and 20 typed tools with approvals, idempotency and failure injection. The agents (Phase 4) and the RAG pipeline (Phase 3) come next. See [Roadmap](#roadmap).
+>
+> **New here? Read [docs/how-it-works.md](docs/how-it-works.md) first.**
 
 ## Problem statement
 
@@ -44,7 +46,7 @@ flowchart TD
 | Frontend | Next.js 16 (App Router), TypeScript, Tailwind CSS 4 |
 | Backend | Python 3.12, FastAPI, Pydantic v2, structlog |
 | Agents | LangGraph + LangChain (Phase 4), OpenAI API |
-| Data | PostgreSQL 17, Redis 7, ChromaDB (Phase 3) |
+| Data | PostgreSQL 17 (Docker locally, or [Supabase](docs/supabase.md)), SQLAlchemy 2.1, Alembic, Redis 7, ChromaDB (Phase 3) |
 | Quality | Pytest, Ruff, ESLint, GitHub Actions, pre-commit |
 | Deploy | Docker, Vercel (frontend), Render or Railway (backend) |
 
@@ -58,17 +60,19 @@ ORM_AI/
 │   │   ├── api/               routers; routes/health.py is live
 │   │   ├── config/            settings loaded from .env
 │   │   ├── core/              logging, request-ID middleware, error handling
-│   │   ├── models/            Pydantic schemas, SQLAlchemy database
+│   │   ├── models/            24 tables (shop.py, platform.py), engine, API schemas
+│   │   ├── seed/              synthetic data: catalog, 91-day simulator, loader
+│   │   ├── tools/             20 typed tools, registry, mock external APIs
 │   │   ├── services/          health checks, Redis, LLM and memory services
 │   │   ├── agents/            8 agents (placeholders until Phases 4–5)
 │   │   ├── graph/             LangGraph state, nodes, edges, workflow
 │   │   ├── rag/               loaders, chunking, embeddings, vector store (Phase 3)
-│   │   ├── tools/             typed read and action tools (Phase 2)
 │   │   └── prompts/           one prompt per agent, fixed structure
+│   ├── migrations/            Alembic migrations (schema history)
 │   ├── tests/                 pytest suite
-│   ├── scripts/               seed.py (Phase 1), ingest.py (Phase 3)
-│   ├── data/                  synthetic data, local vector store
-│   ├── knowledge_base/        shop policies and documents for RAG
+│   ├── scripts/               seed.py (load the shops), ingest.py (Phase 3)
+│   ├── data/seed/             EDGE_CASES.md and a CSV export of every table
+│   ├── knowledge_base/        33 policies, procedures, supplier terms, FAQs, shop profiles
 │   ├── evaluation/            evaluation datasets and reports (Phase 8)
 │   ├── Dockerfile
 │   ├── requirements.txt / requirements-dev.txt
@@ -79,6 +83,7 @@ ORM_AI/
 │       ├── components/        SiteHeader, BackendStatus, ComingSoon
 │       ├── lib/api.ts         backend client (uses NEXT_PUBLIC_API_URL)
 │       └── types/api.ts       response types
+├── docs/                      how it works, database, tools, Supabase guides
 ├── docker/postgres/init/      creates the test database on first start
 ├── .github/workflows/ci.yml   lint, tests and build on every push
 ├── docker-compose.yml         Postgres, Redis and the backend
@@ -111,13 +116,15 @@ docker compose up -d postgres redis
 docker compose ps        # both should say "healthy"
 ```
 
-**3. Start the backend**
+**3. Set up the backend, create the tables and load the shops**
 
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
+alembic upgrade head          # creates the 24 tables
+python -m scripts.seed        # loads the 5 synthetic shops
 uvicorn app.main:app --reload
 ```
 
@@ -137,17 +144,20 @@ npm run dev
 
 Open <http://localhost:3000>. The Backend status card should say **All systems up**.
 
-**Or run the whole backend stack in Docker**
+**Or run the whole backend stack in Docker** (migrations run automatically on start)
 
 ```powershell
 docker compose up --build
+docker compose exec backend python -m scripts.seed
 ```
+
+**Using Supabase instead of Docker Postgres?** See [docs/supabase.md](docs/supabase.md).
 
 ## Tests and checks
 
 ```powershell
 cd backend
-pytest                 # 13 tests
+pytest                 # 104 tests (+1 PostgreSQL test when TEST_DATABASE_URL is set)
 ruff check .
 ruff format --check .
 
@@ -187,8 +197,8 @@ Every response carries an `X-Request-ID` header, and every error uses one shape:
 | Phase | Weeks | What gets built |
 | --- | --- | --- |
 | **0 Foundations** | 1 | Repo, config, logging, health check, Docker, CI ✅ |
-| 1 Data + docs | 2 | Database tables, Alembic, synthetic shop data, knowledge-base documents |
-| 2 Tools | 3 | Typed read and action tools with mock APIs and failure injection |
+| **1 Data + docs** | 2 | Database tables, Alembic, synthetic shop data, knowledge-base documents ✅ |
+| **2 Tools** | 3 | Typed read and action tools with mock APIs and failure injection ✅ |
 | 3 RAG | 4–5 | Chunking, embeddings, ChromaDB, retriever, reranker, citations |
 | 4 Agent graph | 6–7 | LangGraph state graph, 8 agents, Postgres checkpointer, `/api/chat` |
 | 5 Approval + guardrails | 8 | Policy gate, `interrupt()` approval, validator, input guardrails |
@@ -202,4 +212,6 @@ Every response carries an `X-Request-ID` header, and every error uses one shape:
 - Secrets live only in `.env` (git-ignored). The frontend gets `NEXT_PUBLIC_API_URL` and nothing else.
 - Logs mask keys that look like passwords, tokens or API keys.
 - Health errors show only the exception type, never hosts or credentials.
+- Tools are scoped to the caller's shop; consequential actions need a recorded approval; every action is idempotent and audit-logged ([docs/tools.md](docs/tools.md)).
+- Row Level Security is enabled on every table, so Supabase's public Data API cannot read them.
 - `npm install` reports advisories in ESLint's dependencies. They affect lint tooling, not the app. Don't run `npm audit fix --force`: it downgrades Next.js.

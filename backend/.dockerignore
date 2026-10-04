@@ -9,5 +9,3 @@ __pycache__/
 tests/
 evaluation/
 data/
-knowledge_base/
-*.md

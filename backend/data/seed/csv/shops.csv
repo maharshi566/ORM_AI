@@ -1,0 +1,6 @@
+id,name,shop_type,owner_name,phone,locality,city,opened_on,created_at
+SHOP-001,Sri Lakshmi Kirana Store,kirana,Ramesh Naidu,+91-00000-10001,Gandhi Nagar,Demo City,2014-06-01,2026-07-02T08:00:00+05:30
+SHOP-002,Balaji Hardware & Paints,hardware,Suresh Patel,+91-00000-10002,Station Road,Demo City,2011-03-15,2026-07-02T08:00:00+05:30
+SHOP-003,Vidya Stationery & Xerox,stationery,Anita Sharma,+91-00000-10003,College Road,Demo City,2018-07-01,2026-07-02T08:00:00+05:30
+SHOP-004,Nandini Dairy & Bakery,dairy_bakery,Kavya Reddy,+91-00000-10004,Gandhi Nagar,Demo City,2019-01-10,2026-07-02T08:00:00+05:30
+SHOP-005,Smart Mobile Accessories,mobile_accessories,Imran Khan,+91-00000-10005,Market Street,Demo City,2021-08-20,2026-07-02T08:00:00+05:30

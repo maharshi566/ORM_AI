@@ -5,6 +5,7 @@ upper case (for example ``DATABASE_URL``). Values are read from, in order of
 priority: real environment variables, ``backend/.env``, then the repo-root ``.env``.
 """
 
+from datetime import date
 from functools import lru_cache
 from typing import Literal
 
@@ -34,6 +35,9 @@ class Settings(BaseSettings):
 
     # --- Data stores -----------------------------------------------------
     database_url: str = "postgresql+asyncpg://orm_ai:orm_ai@localhost:5432/orm_ai"
+    # Set true only when DATABASE_URL points at a transaction-mode pooler such as
+    # Supabase's port 6543. It turns off prepared statements, which those poolers break.
+    db_transaction_pooler: bool = False
     redis_url: str = "redis://localhost:6379/0"
     chroma_persist_dir: str = "./data/chroma"  # used from Phase 3
 
@@ -49,6 +53,17 @@ class Settings(BaseSettings):
     langsmith_tracing: bool = False
     langsmith_api_key: SecretStr | None = None
     langsmith_project: str = "orm-ai"
+
+    # --- Business date ---------------------------------------------------
+    # Freezes "today" for the synthetic data (generated up to 2026-09-30), so that
+    # "days overdue" and "late by" match the planted edge cases. Leave empty in production.
+    business_date: date | None = None
+
+    # --- Mock external APIs (Phase 2) -------------------------------------
+    # none, timeout, server_error, not_found, rate_limited, or random (fails 20% of calls)
+    mock_api_failure_mode: str = "none"
+    mock_api_latency_ms: int = 0
+    tool_retry_backoff_seconds: float = 0.3
 
     # --- Health checks ---------------------------------------------------
     health_check_timeout_seconds: float = 2.0

@@ -1,0 +1,69 @@
+"""Integration test: run the real Alembic migrations against PostgreSQL.
+
+Skipped unless TEST_DATABASE_URL points at a disposable database, for example:
+
+    TEST_DATABASE_URL=postgresql+asyncpg://orm_ai:...@localhost:5432/orm_ai_test pytest
+"""
+
+import asyncio
+import os
+from pathlib import Path
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+pytestmark = pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not set")
+
+
+def _alembic(url: str) -> Config:
+    config = Config(str(BACKEND_DIR / "alembic.ini"))
+    config.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
+    config.cmd_opts = type("Opts", (), {"x": [f"url={url}"]})()  # same as `alembic -x url=...`
+    return config
+
+
+async def _table_count(url: str) -> int:
+    engine = create_async_engine(url)
+    async with engine.connect() as conn:
+        count = await conn.scalar(
+            text("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'")
+        )
+    await engine.dispose()
+    return int(count or 0)
+
+
+async def _tables_without_rls(url: str) -> list[str]:
+    """Supabase exposes public tables through its Data API; every table needs RLS."""
+    engine = create_async_engine(url)
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            text(
+                "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity"
+            )
+        )
+        names = [row[0] for row in rows]
+    await engine.dispose()
+    return names
+
+
+def test_upgrade_check_and_downgrade() -> None:
+    # Synchronous on purpose: Alembic's env.py starts its own event loop.
+    assert TEST_DATABASE_URL
+    config = _alembic(TEST_DATABASE_URL)
+
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+    assert asyncio.run(_table_count(TEST_DATABASE_URL)) == 25  # 24 tables + alembic_version
+    command.check(config)  # raises if the models and the migrations disagree
+    assert asyncio.run(_tables_without_rls(TEST_DATABASE_URL)) == []
+
+    command.downgrade(config, "base")
+    assert asyncio.run(_table_count(TEST_DATABASE_URL)) == 1
+    command.upgrade(config, "head")
