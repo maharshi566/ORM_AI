@@ -1,8 +1,10 @@
 """Deterministic synthetic data for ORM_AI.
 
-``generate()`` simulates ``days`` days of trading for five local shops and
-returns every table's rows. The same ``seed`` and ``anchor`` always produce the
-same data, which matters because evaluation cases (Phase 8) expect exact answers.
+``generate()`` simulates ``days`` days of trading for fifty local shops (see
+``catalog.SHOPS``) and returns every table's rows. The same ``seed`` and ``anchor``
+always produce the same data, which matters because evaluation cases (Phase 8)
+expect exact answers. Changing the list of shops or the generator's code changes the
+data, so reseed after changing either.
 
 How the simulation works, day by day:
 
@@ -21,7 +23,8 @@ How the simulation works, day by day:
 After the simulation, ``_plant_edge_cases`` adds hand-made situations the agents
 must handle (low stock, a late supplier, a customer over their credit limit, a
 duplicate payment, ...). They are listed in ``Dataset.edge_cases`` and written
-to ``data/seed/EDGE_CASES.md`` by the seed script.
+to ``data/seed/EDGE_CASES.md`` by the seed script. They all live in the first five
+shops (SHOP-001 to SHOP-005); the other forty-five are ordinary trading shops.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ import hashlib
 import json
 import math
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
@@ -586,8 +589,11 @@ class _Simulator:
             self.simulate_returns(spec, day)
 
         self.simulate_payments_and_reminders(day)
-        if self.rng.random() < 0.13:
-            self.simulate_price_change(day)
+        # One chance per five shops, so the share of products whose price changes
+        # stays the same however many shops there are.
+        for _ in range(max(1, len(SHOPS) // 5)):
+            if self.rng.random() < 0.13:
+                self.simulate_price_change(day)
         for spec in SHOPS:
             self.simulate_reorders(spec, day)
 
@@ -1209,10 +1215,11 @@ CASE_TEMPLATES: list[tuple[str, str, str, str]] = [
 
 
 def _build_cases(sim: _Simulator) -> None:
-    """Fifty past cases: real events from the simulation, then templates."""
+    """Past cases, about three per shop: real events from the simulation, then templates."""
     ds = sim.ds
     a = sim.anchor
-    target = 50
+    target = max(50, 3 * len(SHOPS))
+    template_reserve = round(target * 0.24)  # room left for template cases (12 of 50)
 
     def add(
         shop_id: str,
@@ -1316,7 +1323,7 @@ def _build_cases(sim: _Simulator) -> None:
 
     # Resolved cases from things that happened in the simulation.
     for event in sim.sim_events:
-        if len(ds.cases) >= target - 12:
+        if len(ds.cases) >= target - template_reserve:
             break
         day: date = event["day"]
         if event["kind"] == "short_delivery":
@@ -1362,9 +1369,12 @@ def _build_cases(sim: _Simulator) -> None:
                 customer_id=sale["customer_id"],
             )
 
-    # Fill the rest from templates, spread over the past year.
+    # Fill the rest from templates, spread over the past year. Each one goes to the
+    # shop with the fewest cases so far, so every shop has some history to look up.
+    case_counts = Counter(case["shop_id"] for case in ds.cases)
     while len(ds.cases) < target:
-        spec = sim.rng.choice(SHOPS)
+        spec = min(SHOPS, key=lambda shop: (case_counts[shop.id], shop.id))
+        case_counts[spec.id] += 1
         category, title, description, resolution = sim.rng.choice(CASE_TEMPLATES)
         pid = sim.rng.choice(sim.products_by_shop[spec.id])
         product = sim.products[pid]
@@ -1432,4 +1442,39 @@ def validate(ds: Dataset) -> list[str]:
             problems.append(f"{sale['id']}: items do not add up to the subtotal")
         if sale["subtotal"] - sale["discount"] != sale["total"]:
             problems.append(f"{sale['id']}: total is not subtotal minus discount")
+    problems.extend(_shop_boundary_problems(ds))
+    return problems
+
+
+def _shop_boundary_problems(ds: Dataset) -> list[str]:
+    """Records must never mix shops: a bill, an order or a ledger entry belongs to one shop."""
+    problems: list[str] = []
+    shop_of_customer = {c["id"]: c["shop_id"] for c in ds.customers}
+    shop_of_product = {p["id"]: p["shop_id"] for p in ds.products}
+    shop_of_sale = {s["id"]: s["shop_id"] for s in ds.sales}
+    shop_of_order = {po["id"]: po["shop_id"] for po in ds.purchase_orders}
+
+    for sale in ds.sales:
+        customer_id = sale["customer_id"]
+        if customer_id and shop_of_customer.get(customer_id) != sale["shop_id"]:
+            problems.append(f"{sale['id']}: the customer belongs to another shop")
+    for item in ds.sale_items:
+        if shop_of_product.get(item["product_id"]) != shop_of_sale.get(item["sale_id"]):
+            problems.append(f"{item['sale_id']}: sells a product of another shop")
+    for order_item in ds.purchase_order_items:
+        order_shop = shop_of_order.get(order_item["purchase_order_id"])
+        if shop_of_product.get(order_item["product_id"]) != order_shop:
+            problems.append(f"{order_item['purchase_order_id']}: orders a product of another shop")
+    for entry in ds.credit_ledger:
+        if shop_of_customer.get(entry["customer_id"]) != entry["shop_id"]:
+            problems.append(f"credit ledger entry of {entry['customer_id']}: wrong shop")
+    for movement in ds.stock_movements:
+        if shop_of_product.get(movement["product_id"]) != movement["shop_id"]:
+            problems.append(f"stock movement of {movement['product_id']}: wrong shop")
+    shops_with_sales = set(shop_of_sale.values())
+    problems.extend(
+        f"{shop['id']}: no sales in the whole period"
+        for shop in ds.shops
+        if shop["id"] not in shops_with_sales
+    )
     return problems

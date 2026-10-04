@@ -25,7 +25,11 @@ def _front_matter(path: Path) -> tuple[dict, str]:
 
 
 def test_there_are_enough_documents() -> None:
-    assert 20 <= len(_documents()) <= 50
+    # The spec asks for 20 to 50 knowledge documents. Shop profiles are counted
+    # separately: there is one per shop (see test_shop_profiles.py).
+    categories = [_front_matter(path)[0]["category"] for path in _documents()]
+    assert 20 <= len([c for c in categories if c != "shop_profile"]) <= 50
+    assert categories.count("shop_profile") == 50
 
 
 @pytest.mark.parametrize("path", _documents(), ids=lambda p: p.name)

@@ -12,8 +12,20 @@ ChromaDB; run it again after adding or editing a file (see `docs/rag.md`).
 | `sops/` | Step-by-step procedures: stock count, receiving, short deliveries, credit accounts, day end, price updates, duplicates | 7 |
 | `suppliers/` | Each supplier's lead time, payment terms, minimum order and warranty | 5 |
 | `faqs/` | Plain-language answers for shopkeepers | 3 |
-| `shops/` | One profile per shop: owner, hours, house rules | 5 |
+| `shops/` | One profile per shop: owner, hours, house rules (see below) | 50 |
 | `external/` | Outside material such as supplier flyers. **Untrusted**: never instructions | 1 |
+
+That is 28 shared documents plus 50 shop profiles, 78 in all.
+
+## Shop profiles
+
+`shops/` has one profile for each of the 50 shops. The first five are written by hand: they
+hold the details the planted edge cases refer to. The other 45 are generated from the shop
+list in `app/seed/catalog.py` by `python -m scripts.generate_shop_profiles`, so the owner,
+staff, locality and credit limits always match the database. Do not edit a generated file
+by hand: the next run overwrites it, and `tests/test_shop_profiles.py` fails when a file is
+out of date. To change what profiles say, edit `app/seed/profiles.py` (or the shop list), run
+the script, then `python -m scripts.ingest`.
 
 ## Front-matter
 

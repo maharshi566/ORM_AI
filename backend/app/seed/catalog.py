@@ -38,6 +38,96 @@ SHOPS: list[ShopSpec] = [
              "Deepak Singh", "Market Street", date(2021, 8, 20), "MOB", 15, (0, 0, 1, 1, 2)),
 ]  # fmt: skip
 
+# SHOP-001 to SHOP-005 above are the five hand-tuned shops: the planted edge cases live
+# there, and each has a hand-written profile in the knowledge base. SHOP-006 to
+# SHOP-050 are ordinary trading shops built from the table below. Their types are
+# mixed evenly, so the 50 shops are 15 kirana, 10 dairy and bakery, 9 hardware,
+# 8 stationery and 8 mobile accessories shops.
+
+# For each shop type: (customers, bills per day) of a small (S), medium (M) or large (L)
+# shop. A bill count of 0 means a quiet day with no sales.
+_SIZES: dict[str, dict[str, tuple[int, tuple[int, ...]]]] = {
+    "kirana": {"S": (20, (0, 1, 1, 2, 2)), "M": (25, (0, 1, 2, 2, 3)), "L": (30, (1, 2, 2, 3, 4))},
+    "hardware": {"S": (15, (0, 0, 0, 1, 1)), "M": (20, (0, 0, 1, 1, 2)), "L": (25, (0, 1, 1, 2, 3))},
+    "stationery": {"S": (15, (0, 0, 1, 1, 1)), "M": (20, (0, 1, 1, 1, 2)), "L": (25, (0, 1, 2, 2, 3))},
+    "dairy_bakery": {"S": (15, (0, 1, 1, 1, 2)), "M": (20, (0, 1, 1, 2, 3)), "L": (25, (1, 1, 2, 3, 4))},
+    "mobile_accessories": {"S": (12, (0, 0, 0, 1, 1)), "M": (15, (0, 0, 1, 1, 2)), "L": (20, (0, 1, 1, 2, 3))},
+}  # fmt: skip
+
+_SKU_PREFIX = {
+    "kirana": "KIR",
+    "hardware": "HW",
+    "stationery": "ST",
+    "dairy_bakery": "DB",
+    "mobile_accessories": "MOB",
+}
+
+# type, name, owner, staff, locality, opened on, size. One row per shop, in ID order.
+_MORE_SHOPS: list[tuple[str, str, str, str, str, date, str]] = [
+    ("kirana", "Annapurna General Stores", "Venkatesh Gowda", "Pooja Shenoy", "Lake View Colony", date(2016, 4, 12), "M"),
+    ("dairy_bakery", "Fresh Daily Dairy", "Lakshmi Prasad", "Naveen Kumar", "Teachers Colony", date(2020, 2, 3), "M"),
+    ("hardware", "Sri Ganesh Hardware", "Mohan Rao", "Kavitha Rao", "Industrial Area", date(2009, 9, 14), "L"),
+    ("stationery", "Student's Choice Stationery", "Farida Begum", "Salman Ansari", "College Road", date(2017, 6, 19), "M"),
+    ("mobile_accessories", "City Mobile Accessories", "Gurpreet Singh", "Jaspreet Kaur", "Bazaar Lane", date(2022, 1, 10), "S"),
+    ("kirana", "Sai Ram Provision Store", "Harish Kulkarni", "Vinay Naik", "Rajaji Nagar", date(2012, 11, 5), "L"),
+    ("dairy_bakery", "Sunrise Bakery & Dairy", "Savitha Nair", "Divya Pillai", "Green Park", date(2018, 8, 27), "S"),
+    ("kirana", "Krishna Kirana & General", "Rajesh Agarwal", "Mukesh Sharma", "Old Town", date(2007, 3, 21), "M"),
+    ("hardware", "Bharat Paints & Hardware", "Meenakshi Iyer", "Swathi Reddy", "Station Road", date(2015, 5, 30), "M"),
+    ("stationery", "Saraswati Book Stall", "Abdul Rahman", "Irfan Shaikh", "Temple Street", date(2013, 7, 8), "S"),
+    ("mobile_accessories", "Digital Point Mobiles", "Bhaskar Reddy", "Mahesh Yadav", "Market Street", date(2019, 10, 16), "M"),
+    ("kirana", "Lakshmi Narayana Stores", "Jyothi Menon", "Anitha Joseph", "Housing Board Colony", date(2010, 1, 25), "L"),
+    ("dairy_bakery", "Golden Oven Bakery", "Prakash Shetty", "Rohit Pai", "Nehru Park", date(2021, 3, 14), "M"),
+    ("hardware", "Ambika Building Materials", "Sandeep Joshi", "Ankita Singh", "Canal Road", date(2014, 12, 2), "L"),
+    ("kirana", "Venkateshwara Supermart", "Nirmala Devi", "Sudha Rao", "Gandhi Nagar", date(2011, 6, 17), "L"),
+    ("stationery", "Gyan Ganga Books & Stationery", "Kiran Parikh", "Vikram Patil", "Hospital Road", date(2016, 9, 9), "M"),
+    ("mobile_accessories", "Gadget Galaxy", "Ashok Chauhan", "Neha Verma", "Bus Stand Road", date(2023, 4, 21), "S"),
+    ("kirana", "New Bharat Provisions", "Fatima Khatoon", "Shahid Ali", "Railway Colony", date(2008, 8, 18), "M"),
+    ("dairy_bakery", "Shree Dairy Point", "Ganesh Pillai", "Arvind Nair", "Lake View Colony", date(2017, 2, 11), "S"),
+    ("hardware", "National Hardware Mart", "Rekha Banerjee", "Mamata Das", "Mill Road", date(2012, 4, 4), "M"),
+    ("kirana", "Mahalakshmi Departmental Store", "Satish Naik", "Tejas Kamath", "Station Road", date(2015, 10, 1), "L"),
+    ("stationery", "Campus Xerox & Stationery", "Zubair Ahmed", "Rizwan Khan", "College Road", date(2020, 7, 13), "M"),
+    ("dairy_bakery", "Cream & Crust Bakery", "Vimala Kumari", "Bindu Madhavi", "Market Street", date(2019, 12, 6), "L"),
+    ("mobile_accessories", "Mobile Care Centre", "Harpreet Kaur", "Amandeep Gill", "Fort Area", date(2018, 5, 24), "M"),
+    ("kirana", "Gowri Shankar Kirana", "Narayana Swamy", "Sushma Naidu", "Temple Street", date(2009, 2, 16), "S"),
+    ("hardware", "Raj Electricals & Hardware", "Deepa Chandran", "Kishore Babu", "Bus Stand Road", date(2016, 11, 28), "S"),
+    ("kirana", "Ganesh Super Bazaar", "Manjunath Bhat", "Lavanya Hegde", "Housing Board Colony", date(2013, 3, 9), "M"),
+    ("dairy_bakery", "Kamadhenu Dairy", "Shabana Parveen", "Nasreen Taj", "Old Town", date(2014, 8, 19), "M"),
+    ("stationery", "Aksharaa Stationers", "Ravindra Pawar", "Pradeep Rane", "Teachers Colony", date(2021, 6, 2), "S"),
+    ("mobile_accessories", "Tech Zone Accessories", "Usha Rani", "Sowmya Bhat", "Market Street", date(2020, 11, 11), "L"),
+    ("kirana", "Shivam General Store", "Tarun Mehra", "Dinesh Soni", "Rajaji Nagar", date(2017, 9, 23), "M"),
+    ("hardware", "Vishwakarma Hardware Stores", "Balaram Naidu", "Hemanth Kumar", "Industrial Area", date(2008, 1, 30), "L"),
+    ("dairy_bakery", "Sweet Bites Bakery", "Kamala Devi", "Padma Priya", "Gandhi Nagar", date(2022, 9, 5), "S"),
+    ("kirana", "Maruti Provision Mart", "Ismail Qureshi", "Aslam Pasha", "Canal Road", date(2012, 7, 14), "M"),
+    ("stationery", "Kalam Stationery Mart", "Poonam Gupta", "Ritu Malhotra", "Hospital Road", date(2018, 1, 22), "L"),
+    ("mobile_accessories", "Charge Point", "Chandra Mohan", "Santhosh Shetty", "Railway Colony", date(2022, 12, 8), "S"),
+    ("hardware", "Jai Hind Hardware & Sanitary", "Anjali Deshpande", "Geetha Nambiar", "Mill Road", date(2010, 10, 10), "M"),
+    ("kirana", "Padmavathi Stores", "Sridhar Acharya", "Varun Menon", "Green Park", date(2014, 4, 15), "S"),
+    ("dairy_bakery", "Surabhi Dairy", "Roshan Lal", "Anuradha Nayak", "Nehru Park", date(2016, 12, 18), "M"),
+    ("kirana", "Raghavendra Kirana", "Parvathi Amma", "Gopal Krishna", "Old Town", date(2011, 9, 26), "M"),
+    ("stationery", "Pen & Paper House", "Yusuf Sayyed", "Shaista Parveen", "Bazaar Lane", date(2019, 3, 3), "M"),
+    ("mobile_accessories", "Phone Mart", "Nandakumar Nair", "Abhishek Mishra", "Bus Stand Road", date(2017, 1, 17), "M"),
+    ("hardware", "Modern Tools & Paints", "Sunil Biswas", "Rukmini Bai", "Station Road", date(2013, 11, 20), "S"),
+    ("dairy_bakery", "Morning Fresh Dairy", "Girija Prasad", "Faisal Mir", "Hospital Road", date(2023, 7, 29), "M"),
+    ("kirana", "Sri Sai Daily Needs", "Latha Krishnan", "Sneha Kulkarni", "Housing Board Colony", date(2019, 6, 6), "L"),
+]  # fmt: skip
+
+SHOPS.extend(
+    ShopSpec(
+        f"SHOP-{number:03d}",
+        name,
+        shop_type,
+        owner,
+        staff,
+        locality,
+        opened_on,
+        _SKU_PREFIX[shop_type],
+        *_SIZES[shop_type][size],
+    )
+    for number, (shop_type, name, owner, staff, locality, opened_on, size) in enumerate(
+        _MORE_SHOPS, start=len(SHOPS) + 1
+    )
+)
+
 
 @dataclass(frozen=True)
 class SupplierSpec:
@@ -261,4 +351,16 @@ LOCALITIES = [
     "Teachers Colony",
     "Old Town",
     "Green Park",
+    "Rajaji Nagar",
+    "Temple Street",
+    "Bus Stand Road",
+    "Industrial Area",
+    "Housing Board Colony",
+    "Canal Road",
+    "Nehru Park",
+    "Railway Colony",
+    "Hospital Road",
+    "Fort Area",
+    "Bazaar Lane",
+    "Mill Road",
 ]

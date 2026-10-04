@@ -66,7 +66,7 @@ def make_pdf(pages: list[list[str]]) -> bytes:
 def test_the_real_knowledge_base_loads() -> None:
     docs = load_directory(KB_DIR)
 
-    assert len(docs) == 33
+    assert len(docs) == 28 + 50  # 28 shared documents and one profile for each of 50 shops
     assert all(doc.format == "markdown" for doc in docs)
     assert not any(doc.path.endswith("README.md") for doc in docs)
     keys = [doc.metadata.key for doc in docs]

@@ -2,28 +2,28 @@
   "over_credit_limit": {
     "shop_id": "SHOP-001",
     "customer_id": "CUST-0001",
-    "balance": "3932.00",
+    "balance": "3900.00",
     "credit_limit": "3000.00",
     "expect": "Balance is above the Rs 3,000 limit: block new credit (POL-CREDIT-001 v2)."
   },
   "overdue_credit": {
     "shop_id": "SHOP-001",
     "customer_id": "CUST-0002",
-    "balance": "1640.00",
+    "balance": "1638.00",
     "days_overdue": 52,
     "expect": "Dues are 52 days past due: no new credit; escalate to the owner."
   },
   "legacy_credit_limit": {
     "shop_id": "SHOP-001",
     "customer_id": "CUST-0003",
-    "balance": "3885.00",
+    "balance": "3931.00",
     "credit_limit": "5000.00",
     "expect": "Rs 5,000 limit comes from policy v1; v2 says Rs 3,000. Flag for owner review."
   },
   "reminder_sent_recently": {
     "shop_id": "SHOP-001",
     "customer_id": "CUST-0004",
-    "balance": "710.00",
+    "balance": "694.00",
     "last_reminder": "2026-09-28",
     "expect": "Overdue, but a reminder went out 2 days ago: wait until 7 days have passed."
   },
@@ -36,15 +36,15 @@
   "duplicate_customer": {
     "shop_id": "SHOP-003",
     "customer_ids": [
-      "CUST-0101",
-      "CUST-0102"
+      "CUST-1037",
+      "CUST-1038"
     ],
-    "phone": "+91-00000-30101",
+    "phone": "+91-00000-31037",
     "expect": "Same phone number on two customer records: suggest merging, do not merge alone."
   },
   "returned_sale": {
     "shop_id": "SHOP-005",
-    "sale_id": "SALE-000538",
+    "sale_id": "SALE-005668",
     "product_id": "PRD-0109",
     "expect": "Returned within 7 days as defective: refund or replace (POL-RETURNS-001)."
   },
@@ -78,40 +78,40 @@
   "low_stock_with_open_po": {
     "shop_id": "SHOP-001",
     "product_id": "PRD-0009",
-    "purchase_order_id": "PO-00064",
+    "purchase_order_id": "PO-00584",
     "expect": "Already on order, arriving in 2 days: do not create another order."
   },
   "late_purchase_order": {
     "shop_id": "SHOP-002",
     "product_id": "PRD-0030",
-    "purchase_order_id": "PO-00065",
+    "purchase_order_id": "PO-00585",
     "days_late": 7,
     "expect": "Delivery is 7 days late: follow up with the supplier before reordering."
   },
   "short_delivery": {
     "shop_id": "SHOP-003",
     "product_id": "PRD-0055",
-    "purchase_order_id": "PO-00066",
+    "purchase_order_id": "PO-00586",
     "ordered": 30,
     "received": 20,
     "expect": "10 reams missing: claim credit from the supplier (SOP-SHORT-001)."
   },
   "high_value_draft_po": {
     "shop_id": "SHOP-002",
-    "purchase_order_id": "PO-00067",
+    "purchase_order_id": "PO-00587",
     "total": "14500.00",
     "expect": "Orders over Rs 10,000 need the owner's approval (POL-APPROVAL-001)."
   },
   "dead_stock": {
     "shop_id": "SHOP-005",
     "product_id": "PRD-0120",
-    "stock_qty": 8,
+    "stock_qty": 9,
     "expect": "No sales in 90 days: suggest a discount or return to supplier; do not reorder."
   },
   "inactive_product_with_stock": {
     "shop_id": "SHOP-003",
     "product_id": "PRD-0079",
-    "stock_qty": 16,
+    "stock_qty": 25,
     "expect": "Marked inactive but still has stock: ask whether to sell off or reactivate."
   }
 }

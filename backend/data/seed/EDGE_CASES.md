@@ -6,20 +6,20 @@ Each case is a situation the agents must handle correctly; the evaluation set
 
 | Case | Shop | Records | What the agents should do |
 | --- | --- | --- | --- |
-| `over_credit_limit` | SHOP-001 | customer_id=CUST-0001, balance=3932.00, credit_limit=3000.00 | Balance is above the Rs 3,000 limit: block new credit (POL-CREDIT-001 v2). |
-| `overdue_credit` | SHOP-001 | customer_id=CUST-0002, balance=1640.00, days_overdue=52 | Dues are 52 days past due: no new credit; escalate to the owner. |
-| `legacy_credit_limit` | SHOP-001 | customer_id=CUST-0003, balance=3885.00, credit_limit=5000.00 | Rs 5,000 limit comes from policy v1; v2 says Rs 3,000. Flag for owner review. |
-| `reminder_sent_recently` | SHOP-001 | customer_id=CUST-0004, balance=710.00, last_reminder=2026-09-28 | Overdue, but a reminder went out 2 days ago: wait until 7 days have passed. |
+| `over_credit_limit` | SHOP-001 | customer_id=CUST-0001, balance=3900.00, credit_limit=3000.00 | Balance is above the Rs 3,000 limit: block new credit (POL-CREDIT-001 v2). |
+| `overdue_credit` | SHOP-001 | customer_id=CUST-0002, balance=1638.00, days_overdue=52 | Dues are 52 days past due: no new credit; escalate to the owner. |
+| `legacy_credit_limit` | SHOP-001 | customer_id=CUST-0003, balance=3931.00, credit_limit=5000.00 | Rs 5,000 limit comes from policy v1; v2 says Rs 3,000. Flag for owner review. |
+| `reminder_sent_recently` | SHOP-001 | customer_id=CUST-0004, balance=694.00, last_reminder=2026-09-28 | Overdue, but a reminder went out 2 days ago: wait until 7 days have passed. |
 | `duplicate_payment` | SHOP-002 | customer_id=CUST-0026, payment_ref=417893562210 | Two Rs 6,000 payments with the same UPI reference on the same day: likely a duplicate entry. Ask a person to check before changing the ledger. |
-| `duplicate_customer` | SHOP-003 | customer_ids=['CUST-0101', 'CUST-0102'], phone=+91-00000-30101 | Same phone number on two customer records: suggest merging, do not merge alone. |
-| `returned_sale` | SHOP-005 | sale_id=SALE-000538, product_id=PRD-0109 | Returned within 7 days as defective: refund or replace (POL-RETURNS-001). |
+| `duplicate_customer` | SHOP-003 | customer_ids=['CUST-1037', 'CUST-1038'], phone=+91-00000-31037 | Same phone number on two customer records: suggest merging, do not merge alone. |
+| `returned_sale` | SHOP-005 | sale_id=SALE-005668, product_id=PRD-0109 | Returned within 7 days as defective: refund or replace (POL-RETURNS-001). |
 | `stock_count_mismatch` | SHOP-001 | product_id=PRD-0002, missing_units=6 | Adjustment recorded after the count; investigate sales and receipts, open case. |
 | `negative_margin` | SHOP-004 | product_id=PRD-0085, cost_price=352.00, selling_price=340.00 | Selling below cost: propose a price within MRP; price changes need approval. |
 | `low_stock_no_po` | SHOP-001 | product_id=PRD-0003, stock_qty=2, reorder_level=8 | Below reorder level with no open purchase order: propose a reorder. |
 | `low_stock_no_po_dairy` | SHOP-004 | product_id=PRD-0083, stock_qty=2, reorder_level=6 | Below reorder level with no open purchase order: propose a reorder. |
-| `low_stock_with_open_po` | SHOP-001 | product_id=PRD-0009, purchase_order_id=PO-00064 | Already on order, arriving in 2 days: do not create another order. |
-| `late_purchase_order` | SHOP-002 | product_id=PRD-0030, purchase_order_id=PO-00065, days_late=7 | Delivery is 7 days late: follow up with the supplier before reordering. |
-| `short_delivery` | SHOP-003 | product_id=PRD-0055, purchase_order_id=PO-00066, ordered=30, received=20 | 10 reams missing: claim credit from the supplier (SOP-SHORT-001). |
-| `high_value_draft_po` | SHOP-002 | purchase_order_id=PO-00067, total=14500.00 | Orders over Rs 10,000 need the owner's approval (POL-APPROVAL-001). |
-| `dead_stock` | SHOP-005 | product_id=PRD-0120, stock_qty=8 | No sales in 90 days: suggest a discount or return to supplier; do not reorder. |
-| `inactive_product_with_stock` | SHOP-003 | product_id=PRD-0079, stock_qty=16 | Marked inactive but still has stock: ask whether to sell off or reactivate. |
+| `low_stock_with_open_po` | SHOP-001 | product_id=PRD-0009, purchase_order_id=PO-00584 | Already on order, arriving in 2 days: do not create another order. |
+| `late_purchase_order` | SHOP-002 | product_id=PRD-0030, purchase_order_id=PO-00585, days_late=7 | Delivery is 7 days late: follow up with the supplier before reordering. |
+| `short_delivery` | SHOP-003 | product_id=PRD-0055, purchase_order_id=PO-00586, ordered=30, received=20 | 10 reams missing: claim credit from the supplier (SOP-SHORT-001). |
+| `high_value_draft_po` | SHOP-002 | purchase_order_id=PO-00587, total=14500.00 | Orders over Rs 10,000 need the owner's approval (POL-APPROVAL-001). |
+| `dead_stock` | SHOP-005 | product_id=PRD-0120, stock_qty=9 | No sales in 90 days: suggest a discount or return to supplier; do not reorder. |
+| `inactive_product_with_stock` | SHOP-003 | product_id=PRD-0079, stock_qty=25 | Marked inactive but still has stock: ask whether to sell off or reactivate. |

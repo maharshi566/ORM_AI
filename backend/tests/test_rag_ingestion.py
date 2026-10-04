@@ -29,7 +29,7 @@ def store(tmp_path: Path) -> VectorStore:
 async def test_dry_run_counts_without_storing(kb_copy: Path) -> None:
     report = await ingest_knowledge_base(kb_dir=kb_copy, store=None, embedder=None, dry_run=True)
 
-    assert report.documents == 33 and report.chunks > 100
+    assert report.documents == 78 and report.chunks > 200
     assert report.added == 0 and report.dry_run
 
 
@@ -118,7 +118,7 @@ async def test_database_tables_match_the_knowledge_base(
     )
 
     assert first.database.startswith("updated") and again.database.startswith("updated")
-    assert await _count(session_factory, Document) == 33
+    assert await _count(session_factory, Document) == 78
     assert await _count(session_factory, DocumentChunk) == first.chunks
     async with session_factory() as session:
         v1 = await session.get(Document, "POL-CREDIT-001@v1")
@@ -131,7 +131,7 @@ async def test_database_tables_match_the_knowledge_base(
     await ingest_knowledge_base(
         kb_dir=kb_copy, store=store, embedder=HashEmbedder(), session_factory=session_factory
     )
-    assert await _count(session_factory, Document) == 32
+    assert await _count(session_factory, Document) == 77
     assert await _count(session_factory, DocumentChunk) == first.chunks - deleted_chunks
 
 

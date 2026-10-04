@@ -111,7 +111,7 @@ def test_invalid_sizes_are_rejected() -> None:
 def test_real_knowledge_base_chunks() -> None:
     chunks = chunk_documents(load_directory(KB_DIR))
 
-    assert 100 <= len(chunks) <= 200
+    assert 200 <= len(chunks) <= 300
     assert len({c.id for c in chunks}) == len(chunks)
     assert max(c.token_count for c in chunks) <= 600
     limits = [c for c in chunks if c.citation == "[POL-CREDIT-001 v2 §2. Credit limits]"]

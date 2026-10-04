@@ -25,11 +25,27 @@ def test_data_is_internally_consistent(dataset: Dataset) -> None:
 
 def test_volumes_match_the_spec(dataset: Dataset) -> None:
     counts = dataset.counts()
-    assert counts["shops"] == 5
-    assert 95 <= counts["customers"] <= 110
-    assert 200 <= counts["sales"] <= 600
-    assert counts["cases"] == 50
-    assert counts["purchase_orders"] >= 40
+    assert counts["shops"] == 50
+    assert counts["users"] == 101  # an owner and a staff member per shop, plus the admin
+    assert counts["suppliers"] == 12
+    assert 900 <= counts["customers"] <= 1200
+    assert 4000 <= counts["sales"] <= 7000
+    assert counts["cases"] == 150  # about three past cases per shop
+    assert counts["purchase_orders"] >= 400
+
+
+def test_every_shop_has_a_working_history(dataset: Dataset) -> None:
+    for table in ("customers", "products", "sales", "cases"):
+        shops_with_rows = {row["shop_id"] for row in dataset.rows(table)}
+        assert shops_with_rows == {s["id"] for s in dataset.shops}, table
+    cases_per_shop = Counter(case["shop_id"] for case in dataset.cases)
+    assert min(cases_per_shop.values()) >= 2
+
+
+def test_planted_edge_cases_stay_in_the_five_hand_tuned_shops(dataset: Dataset) -> None:
+    hand_tuned = {f"SHOP-00{n}" for n in range(1, 6)}
+    assert {case["shop_id"] for case in dataset.edge_cases.values()} <= hand_tuned
+    assert len(dataset.edge_cases) == 17
 
 
 def test_every_reference_points_at_a_real_row(dataset: Dataset) -> None:
