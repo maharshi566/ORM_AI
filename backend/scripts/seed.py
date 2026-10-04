@@ -61,8 +61,9 @@ async def run(args: argparse.Namespace) -> int:
     print(f"Fingerprint: {dataset.fingerprint()}")
 
     (BACKEND_DIR / "data" / "seed").mkdir(parents=True, exist_ok=True)
+    # newline="\n" keeps LF line endings on Windows too, so git sees no change.
     (BACKEND_DIR / "data" / "seed" / "EDGE_CASES.md").write_text(
-        edge_cases_markdown(dataset), encoding="utf-8"
+        edge_cases_markdown(dataset), encoding="utf-8", newline="\n"
     )
     if args.export_dir:
         files = export_csv(dataset, args.export_dir)

@@ -67,7 +67,11 @@ def export_csv(dataset: Dataset, directory: Path) -> list[Path]:
                     writer.writerow({key: _csv_value(value) for key, value in row.items()})
         written.append(path)
     edge_path = directory / "edge_cases.json"
-    edge_path.write_text(json.dumps(dataset.edge_cases, indent=2, default=str) + "\n", "utf-8")
+    edge_path.write_text(
+        json.dumps(dataset.edge_cases, indent=2, default=str) + "\n",
+        encoding="utf-8",
+        newline="\n",  # LF on every OS, matching .gitattributes
+    )
     written.append(edge_path)
     return written
 
