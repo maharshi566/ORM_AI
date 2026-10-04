@@ -7,6 +7,7 @@ top to bottom once. After that, use the other guides as references:
 - [tools.md](tools.md): every tool the agents can call, and the rules they enforce
 - [rag.md](rag.md): knowledge search, from documents to cited passages
 - [supabase.md](supabase.md): using Supabase as the database
+- [omniroute.md](omniroute.md): using OmniRoute (or another gateway) instead of a plain OpenAI key
 
 ## 1. The big picture
 
@@ -35,7 +36,7 @@ Built so far:
 | Phase | What it gives you | Where it lives |
 | --- | --- | --- |
 | 0 Foundations | A running API with config, logging, request IDs, error handling, health check, Docker, tests, CI | `backend/app/main.py`, `core/`, `config/` |
-| 1 Data | 24 database tables, migrations, 91 days of synthetic shop data, 33 policy documents | `models/`, `migrations/`, `seed/`, `knowledge_base/` |
+| 1 Data | 24 database tables, migrations, 91 days of synthetic data for 50 shops, 78 knowledge documents (28 shared, one profile per shop) | `models/`, `migrations/`, `seed/`, `knowledge_base/` |
 | 2 Tools | 20 typed tools (13 read, 7 action), with approvals, idempotency, retries and logging | `tools/` |
 | 3 Knowledge search | Documents chunked and embedded into ChromaDB; hybrid search with citations; the `search_knowledge` tool; a 20-question evaluation | `rag/`, `scripts/ingest.py`, `evaluation/` |
 
@@ -108,11 +109,15 @@ Two design rules keep the numbers trustworthy:
 
 ### How the synthetic data is made
 
-`backend/app/seed/generator.py` simulates 91 days of trading for five invented
-shops: a kirana store, a hardware store, a stationery shop, a dairy and bakery,
-and a mobile accessories shop. Each day it does the following:
+`backend/app/seed/generator.py` simulates 91 days of trading for 50 invented
+shops of five kinds: 15 kirana stores, 10 dairies and bakeries, 9 hardware
+stores, 8 stationery shops and 8 mobile accessories shops. The shop list is in
+`backend/app/seed/catalog.py`: each shop has an owner, a staff member, a
+locality, and a size that decides how many customers and bills it has. Each day
+the simulation does the following:
 
-1. Each shop rings up a few bills. Products are picked by popularity.
+1. Each shop rings up bills, a busy kirana far more than a small stationery shop.
+   Products are picked by popularity.
 2. Known customers sometimes buy on credit; each credit bill is due in 30 days.
 3. Credit customers pay back according to a habit (prompt, regular or slow).
 4. Overdue customers get a reminder, at most one every 7 days.
@@ -121,10 +126,14 @@ and a mobile accessories shop. Each day it does the following:
 6. Sometimes a supplier raises a price, bakery items expire, or a customer
    returns something.
 
-After the simulation it **plants 17 edge cases**. These are situations the agents
-must handle correctly: a customer over their limit, a late cement delivery, ghee
-selling below cost, a duplicate UPI payment, and more. They are listed in
-`backend/data/seed/EDGE_CASES.md`.
+After the simulation it **plants 17 edge cases**, all in the first five shops
+(SHOP-001 to SHOP-005). These are situations the agents must handle correctly: a
+customer over their limit, a late cement delivery, ghee selling below cost, a
+duplicate UPI payment, and more. They are listed in
+`backend/data/seed/EDGE_CASES.md`. The other 45 shops have ordinary trading only.
+They make the data realistic, give "compare my shop with others" questions
+something to work with, and let the tests prove that one shop never sees another
+shop's records.
 
 The generator is **deterministic**. The same seed always produces the same
 fingerprint, which the tests check, so evaluation answers in Phase 8 can be
@@ -132,11 +141,15 @@ exact.
 
 ### The knowledge base
 
-`backend/knowledge_base/` holds 33 short Markdown documents: policies, procedures,
-supplier terms, FAQs and shop profiles. Every document has front-matter
-(`document_id`, `version`, `effective_date`, ...) so that answers can cite it.
-They match the data: the credit policy's Rs 3,000 limit and 45-day block are the
-rules the credit edge cases test. Two documents exist purely as tests:
+`backend/knowledge_base/` holds 78 short Markdown documents: 28 shared ones
+(policies, procedures, supplier terms, FAQs) and one profile for each of the 50
+shops. Every document has front-matter (`document_id`, `version`,
+`effective_date`, ...) so that answers can cite it. They match the data: the
+credit policy's Rs 3,000 limit and 45-day block are the rules the credit edge
+cases test. The profiles of the first five shops are written by hand; the other
+45 are generated from the shop list by `python -m scripts.generate_shop_profiles`,
+so a profile can never disagree with the database about the owner, the
+locality or a credit limit (a test checks that). Two documents exist purely as tests:
 
 - **Credit policy v1** is superseded by v2. Retrieval must prefer v2.
 - **A supplier flyer** contains text pretending to be an instruction for AI
@@ -200,7 +213,7 @@ tool-failure evaluation cases in Phase 8.
 
 ## 5. Knowledge search (Phase 3)
 
-The agents need the shop's *rules* as well as its records. Phase 3 makes the 33
+The agents need the shop's *rules* as well as its records. Phase 3 makes the 78
 documents in `knowledge_base/` searchable by meaning, so a question like "can a
 staff member approve a Rs 1,500 refund?" finds `POL-RETURNS-001 §4. Approval`
 even though the words differ. [rag.md](rag.md) explains every step; in short:
@@ -221,23 +234,59 @@ even though the words differ. [rag.md](rag.md) explains every step; in short:
 The Knowledge agent gets exactly one tool, `search_knowledge`. You can try the
 same search in the browser: <http://localhost:8000/docs> → `GET /api/knowledge/search`.
 
+Embeddings (and, from Phase 4, chat) are requested through one small piece of
+code, `app/services/llm_service.py`. It sends them to OpenAI, or to any
+OpenAI-compatible gateway you name in `.env`, so switching is a settings change,
+not a code change. [omniroute.md](omniroute.md) shows how to use OmniRoute, and
+`python -m scripts.check_llm` tests whatever you configured: can it be reached,
+does chat work, can the model answer in JSON and call tools, do embeddings work.
+
 ## 6. How to check everything yourself
 
 From `backend/`, with Docker's Postgres and Redis running and `(.venv)` active:
 
 ```powershell
 alembic upgrade head            # create the 24 tables
-python -m scripts.seed          # load the synthetic shops
-python -m scripts.ingest        # embed the knowledge base (needs OPENAI_API_KEY)
+python -m scripts.seed          # load the 50 synthetic shops
+python -m scripts.ingest        # embed the knowledge base (needs an AI key or gateway)
 python -m scripts.eval_retrieval  # retrieval quality: hit@5 must be at least 0.8
 pytest                          # the whole test suite, no API key needed
 uvicorn app.main:app --reload   # then open http://localhost:8000/docs
 ```
 
-To see the data, open `backend/data/seed/csv/*.csv` in your editor, or connect a
-database viewer to `localhost:5432`.
+No key yet? Add `--embedding-model hash` to `ingest` and `eval_retrieval` to try
+search offline. After you add a key or a gateway, run `python -m scripts.check_llm`.
 
-## 7. What comes next
+To see the data, open `backend/data/seed/csv/*.csv` in your editor, or look inside
+the database itself in your browser or editor: [database.md](database.md#look-inside-the-database).
+
+## 7. Async: how one process serves many requests
+
+The backend is written in the *async* style (`async def` and `await`). Think of a
+cook with many pans: while one dish waits on the stove, the cook tends another,
+instead of standing still. A program waiting for the database, Redis, a web
+request or an AI model is the dish on the stove. With async, the single running
+process (the *event loop*) uses that waiting time to serve other requests, so
+one slow AI call does not freeze everyone else.
+
+What this project does about it:
+
+- **Async all the way.** The database (SQLAlchemy with `asyncpg`), Redis
+  (`redis.asyncio`), the AI client (`AsyncOpenAI`), the tools, the search code and
+  every command-line script are `async def`.
+- **Blocking libraries go to a helper thread.** Some code cannot be async: ChromaDB,
+  reading files, splitting text into chunks, building the keyword index, the data
+  generator. Calling it directly would freeze the event loop, so it runs through
+  `asyncio.to_thread(...)`. `AsyncVectorStore` (in `rag/vector_store.py`) wraps ChromaDB
+  this way, with a lock because ChromaDB's local mode is not safe to share between threads.
+- **Two safety nets.** Ruff's `ASYNC` rules (already on in `pyproject.toml`) flag the
+  common mistakes, such as `time.sleep` or a blocking `requests` call inside `async def`.
+  And `tests/test_async_guard.py` makes the blocking functions fail if they are ever called
+  on the event loop's own thread, so a slip fails the test suite.
+- **A rule for Phase 4.** Every node in the agent graph is `async def`, and anything blocking
+  goes through `asyncio.to_thread`.
+
+## 8. What comes next
 
 | Phase | Builds on | Adds |
 | --- | --- | --- |

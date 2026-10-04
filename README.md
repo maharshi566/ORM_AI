@@ -2,7 +2,7 @@
 
 A multi-agent AI assistant that helps local shopkeepers keep their records organised and detailed.
 
-> **Status:** Phases 0–3 are done: the API foundations, 24 database tables with migrations, 91 days of synthetic shop data with 17 planted edge cases, 33 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, and knowledge search (RAG) with citations. The agents (Phase 4) come next. See [Roadmap](#roadmap).
+> **Status:** Phases 0–3 are done: the API foundations, 24 database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, and knowledge search (RAG) with citations. The code is async throughout, and the AI models can be reached directly through OpenAI or through a gateway such as [OmniRoute](docs/omniroute.md). The agents (Phase 4) come next. See [Roadmap](#roadmap).
 >
 > **New here? Read [docs/how-it-works.md](docs/how-it-works.md) first.**
 
@@ -45,7 +45,7 @@ flowchart TD
 | --- | --- |
 | Frontend | Next.js 16 (App Router), TypeScript, Tailwind CSS 4 |
 | Backend | Python 3.12, FastAPI, Pydantic v2, structlog |
-| Agents | LangGraph + LangChain (Phase 4), OpenAI API |
+| Agents | LangGraph + LangChain (Phase 4), OpenAI API or any OpenAI-compatible gateway such as [OmniRoute](docs/omniroute.md) |
 | Data | PostgreSQL 17 (Docker locally, or [Supabase](docs/supabase.md)), SQLAlchemy 2.1, Alembic, Redis 7, ChromaDB |
 | Quality | Pytest, Ruff, ESLint, GitHub Actions, pre-commit |
 | Deploy | Docker, Vercel (frontend), Render or Railway (backend) |
@@ -61,18 +61,18 @@ ORM_AI/
 │   │   ├── config/            settings loaded from .env
 │   │   ├── core/              logging, request-ID middleware, error handling
 │   │   ├── models/            24 tables (shop.py, platform.py), engine, API schemas
-│   │   ├── seed/              synthetic data: catalog, 91-day simulator, loader
+│   │   ├── seed/              synthetic data: 50-shop catalog, 91-day simulator, loader, shop profiles
 │   │   ├── tools/             21 typed tools, registry, mock external APIs
-│   │   ├── services/          health checks, Redis, LLM and memory services
+│   │   ├── services/          health checks, Redis, LLM gateway client and checks, memory
 │   │   ├── agents/            8 agents (placeholders until Phases 4–5)
 │   │   ├── graph/             LangGraph state, nodes, edges, workflow
 │   │   ├── rag/               knowledge search: loaders, chunking, embeddings, ChromaDB, retriever
 │   │   └── prompts/           one prompt per agent, fixed structure
 │   ├── migrations/            Alembic migrations (schema history)
 │   ├── tests/                 pytest suite
-│   ├── scripts/               seed.py, ingest.py (embed documents), eval_retrieval.py
+│   ├── scripts/               seed.py, ingest.py, eval_retrieval.py, check_llm.py, generate_shop_profiles.py
 │   ├── data/seed/             EDGE_CASES.md and a CSV export of every table
-│   ├── knowledge_base/        33 policies, procedures, supplier terms, FAQs, shop profiles
+│   ├── knowledge_base/        78 documents: policies, procedures, supplier terms, FAQs, 50 shop profiles
 │   ├── evaluation/            test sets (retrieval now, agents in Phase 8) and reports
 │   ├── Dockerfile
 │   ├── requirements.txt / requirements-dev.txt
@@ -83,10 +83,10 @@ ORM_AI/
 │       ├── components/        SiteHeader, BackendStatus, ComingSoon
 │       ├── lib/api.ts         backend client (uses NEXT_PUBLIC_API_URL)
 │       └── types/api.ts       response types
-├── docs/                      how it works, database, tools, RAG, Supabase guides
+├── docs/                      how it works, database, tools, RAG, Supabase, OmniRoute guides
 ├── docker/postgres/init/      creates the test database on first start
 ├── .github/workflows/ci.yml   lint, tests and build on every push
-├── docker-compose.yml         Postgres, Redis and the backend
+├── docker-compose.yml         Postgres, Redis, the backend (and optional Adminer and OmniRoute)
 └── .env.example               every setting, documented
 ```
 
@@ -124,12 +124,14 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 alembic upgrade head          # creates the 24 tables
-python -m scripts.seed        # loads the synthetic shops
-python -m scripts.ingest      # embeds the knowledge base (needs OPENAI_API_KEY in .env)
+python -m scripts.seed        # loads the 50 synthetic shops
+python -m scripts.ingest      # embeds the knowledge base (needs an AI key or gateway in .env)
 uvicorn app.main:app --reload
 ```
 
-No OpenAI key yet? `python -m scripts.ingest --embedding-model hash` and `EMBEDDING_MODEL=hash` in `.env` run the knowledge search offline.
+No OpenAI key yet? `python -m scripts.ingest --embedding-model hash` and `EMBEDDING_MODEL=hash` in `.env` run the knowledge search offline. To use a gateway such as OmniRoute instead of OpenAI, follow [docs/omniroute.md](docs/omniroute.md); `python -m scripts.check_llm` then tests the connection (chat, JSON, tool calling, embeddings).
+
+To look inside the database in your browser: `docker compose --profile tools up -d adminer`, then open <http://localhost:8080> ([docs/database.md](docs/database.md#look-inside-the-database) has the login details and other tools).
 
 - Health check: <http://localhost:8000/api/health> should return `"status": "ok"`.
 - API docs: <http://localhost:8000/docs> (try `GET /api/knowledge/search` there)
@@ -160,7 +162,7 @@ docker compose exec backend python -m scripts.seed
 
 ```powershell
 cd backend
-pytest                 # 177 tests, no API key needed (+1 PostgreSQL test when TEST_DATABASE_URL is set)
+pytest                 # 391 tests, no API key needed (+1 PostgreSQL test when TEST_DATABASE_URL is set)
 ruff check .
 ruff format --check .
 
@@ -220,5 +222,6 @@ Every response carries an `X-Request-ID` header, and every error uses one shape:
 - Health errors show only the exception type, never hosts or credentials.
 - Tools are scoped to the caller's shop; consequential actions need a recorded approval; every action is idempotent and audit-logged ([docs/tools.md](docs/tools.md)).
 - Retrieved documents are treated as data, never instructions: outside material is excluded by default, passages are wrapped and labelled, and instruction-like text is flagged ([docs/rag.md](docs/rag.md)).
+- Model calls go through one client (`app/services/llm_service.py`). A key is sent only to the address it belongs to, no key or address password is printed in a message or log line, and `check_llm` warns when a gateway is reached over plain `http://` across the internet ([docs/omniroute.md](docs/omniroute.md)).
 - Row Level Security is enabled on every table, so Supabase's public Data API cannot read them.
 - `npm install` reports advisories in ESLint's dependencies. They affect lint tooling, not the app. Don't run `npm audit fix --force`: it downgrades Next.js.

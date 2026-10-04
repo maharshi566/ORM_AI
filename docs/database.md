@@ -111,15 +111,24 @@ What you get with the default seed (42) and "today" = 2026-09-30:
 
 | Records | Count |
 | --- | --- |
-| Shops / suppliers / users | 5 / 12 / 11 |
-| Customers | 102 |
-| Products | 123 |
-| Bills / bill lines | 542 / 1,234 |
-| Purchase orders | 67 |
-| Stock movements | 1,461 |
-| Credit ledger entries | 139 |
-| Historical cases | 50 |
-| Planted edge cases | 17 (see `data/seed/EDGE_CASES.md`) |
+| Shops / suppliers / users | 50 / 12 / 101 |
+| Customers | 1,038 |
+| Products | 1,256 |
+| Bills / bill lines | 5,672 / 12,308 |
+| Purchase orders / order lines | 587 / 613 |
+| Stock movements | 14,678 |
+| Credit ledger entries | 1,545 |
+| Price changes / notifications | 238 / 124 |
+| Historical cases | 150 |
+| Planted edge cases | 17, all in SHOP-001 to SHOP-005 (see `data/seed/EDGE_CASES.md`) |
+
+The 50 shops are 15 kirana stores, 10 dairies and bakeries, 9 hardware stores, 8
+stationery shops and 8 mobile accessories shops, in 20 localities. Each has one owner and
+one staff user (the 101st user is an admin). A shop has between 12 and 30 customers, 22
+to 29 products and, over the 91 days, between about 26 and 223 bills, depending on its
+size. The shop list lives in `backend/app/seed/catalog.py`: to add or change a shop, edit
+it there, then run `python -m scripts.generate_shop_profiles` and `python -m scripts.seed
+--reset`, and `python -m scripts.ingest` (see [rag.md](rag.md)).
 
 Important details:
 
@@ -132,3 +141,91 @@ Important details:
 - **Fake phone numbers** all follow `+91-00000-xxxxx`, so none can belong to a
   real person.
 - **Tests never touch your database.** They build their own SQLite copy.
+- **One shop never sees another.** Every shop record carries a `shop_id`, and the tools take
+  the shop from the logged-in user, never from what the AI asks for. A test checks
+  that every record points to a customer, product or bill of the same shop.
+
+## Look inside the database
+
+You can open the tables and read the rows yourself. Use whichever of these suits you;
+all of them need the database running (`docker compose up -d postgres redis`).
+
+The connection details are the same everywhere:
+
+| Setting | Value |
+| --- | --- |
+| Host | `localhost` |
+| Port | `5432` (or your `POSTGRES_PORT`) |
+| Database | `orm_ai` |
+| User | `orm_ai` |
+| Password | the `POSTGRES_PASSWORD` line in your `.env` (`change_me_local_only` if you kept the example) |
+
+**1. Adminer, in your browser (nothing to install).** In the project's top folder:
+
+```powershell
+docker compose --profile tools up -d adminer
+```
+
+Open <http://localhost:8080>. Choose **PostgreSQL** in the *System* box, put `postgres` in
+*Server* (that is the name of the database container, not `localhost`), then the user,
+password and database from the table above, and click **Login**. This address fills in
+everything but the password: <http://localhost:8080/?pgsql=postgres&username=orm_ai&db=orm_ai>.
+In the left list click a table name, then **Select data** to see rows, or **SQL command** to
+type a query. When you are done: `docker compose stop adminer`.
+
+**2. IntelliJ's Database window.** This is in IntelliJ IDEA *Ultimate*; the free Community
+edition does not have it (use Adminer or DBeaver). Open **View → Tool Windows → Database**,
+click **+ → Data Source → PostgreSQL**, fill in the table above, click the blue *Download
+missing driver files* link if it shows one, press **Test Connection**, then **OK**. Open
+`orm_ai → public → tables`, and double-click a table to see its rows.
+
+**3. DBeaver (free desktop app, <https://dbeaver.io>).** **Database → New Database
+Connection → PostgreSQL**, fill in the table above, **Test Connection** (it offers to download
+the driver), **Finish**.
+
+**4. The terminal, with nothing extra installed.**
+
+```powershell
+docker compose exec postgres psql -U orm_ai -d orm_ai
+```
+
+At the `orm_ai=#` prompt: `\dt` lists the tables, `\d shops` shows one table's columns, a
+query ends with `;`, and `\q` quits. For a single answer without entering the prompt:
+
+```powershell
+docker compose exec postgres psql -U orm_ai -d orm_ai -c "SELECT count(*) FROM shops;"
+```
+
+**5. Supabase.** If you use Supabase instead of Docker, open your project's **Table Editor**
+(rows) or **SQL Editor** (queries) in the Supabase dashboard.
+
+### Some queries to try
+
+```sql
+-- How many shops of each kind?
+SELECT shop_type, count(*) FROM shops GROUP BY shop_type ORDER BY 2 DESC;
+
+-- Which products in SHOP-001 are at or below their reorder level?
+SELECT name, stock_qty, reorder_level FROM products
+WHERE shop_id = 'SHOP-001' AND stock_qty <= reorder_level ORDER BY name;
+
+-- The five customers who owe the most (credit balance = sum of ledger entries)
+SELECT c.name, c.shop_id, sum(l.amount) AS balance
+FROM credit_ledger l JOIN customers c ON c.id = l.customer_id
+GROUP BY c.id, c.name, c.shop_id ORDER BY balance DESC LIMIT 5;
+
+-- The busiest shops by number of bills
+SELECT s.id, s.name, count(*) AS bills
+FROM sales x JOIN shops s ON s.id = x.shop_id
+GROUP BY s.id, s.name ORDER BY bills DESC LIMIT 5;
+
+-- Shops with the most purchase orders still on their way
+SELECT s.name, count(*) AS open_orders
+FROM purchase_orders p JOIN shops s ON s.id = p.shop_id
+WHERE p.status IN ('placed', 'partially_received')
+GROUP BY s.name ORDER BY open_orders DESC LIMIT 5;
+```
+
+Look, but do not edit rows by hand: stock and credit are ledgers, and the app expects
+their totals to match their entries. If you change something by accident, restore the
+original data with `python -m scripts.seed --reset` (this wipes every table first).

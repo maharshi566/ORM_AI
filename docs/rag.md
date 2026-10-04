@@ -31,8 +31,8 @@ flowchart LR
 | --- | --- | --- |
 | Load + clean | `app/rag/loaders.py` | Reads Markdown, text and PDF. Checks front-matter. Removes noise (Windows line endings, invisible characters, PDF headers, footers and page numbers) but keeps headings and tables. |
 | Chunk | `app/rag/chunking.py` | One chunk per `##` section (sub-sections become `Parent › Child`). Long sections split at paragraphs, about 600 tokens per chunk with 80 tokens of overlap. Each chunk carries all of its document's metadata. |
-| Embed | `app/rag/embeddings.py` | Turns each chunk (with its title and section in front) into a vector: OpenAI `text-embedding-3-small`, or the offline `hash` embedder. |
-| Store | `app/rag/vector_store.py` | ChromaDB, inside the backend process, files in `backend/data/chroma`. One collection per group: policies, sops, faqs, reference, external. |
+| Embed | `app/rag/embeddings.py` | Turns each chunk (with its title and section in front) into a vector: OpenAI `text-embedding-3-small`, any embedding model on an OpenAI-compatible gateway such as OmniRoute, or the offline `hash` embedder. Where the call goes is decided in `app/services/llm_service.py`. |
+| Store | `app/rag/vector_store.py` | ChromaDB, inside the backend process, files in `backend/data/chroma`. One collection per group: policies, sops, faqs, reference, external. ChromaDB itself is not async, so `AsyncVectorStore` runs each call in a worker thread, one at a time (see "Async" in [how-it-works.md](how-it-works.md)). |
 | Ingest | `app/rag/ingestion.py`, `scripts/ingest.py` | Ties the above together. Skips unchanged chunks, removes deleted ones, and records everything in the `documents` and `document_chunks` tables. |
 | Search | `app/rag/retriever.py` | Hybrid search, filters, relevance gate (below). |
 | Rerank | `app/rag/reranker.py` | Final order: heuristic (default), LLM, or none. |
@@ -46,6 +46,7 @@ flowchart LR
 | `python -m scripts.ingest` | Embed new and changed chunks, remove deleted ones, update the database. Safe to run any time; a re-run with no changes costs nothing. |
 | `python -m scripts.ingest --dry-run` | Load and chunk only, and show the counts. No key needed. |
 | `python -m scripts.ingest --embedding-model hash` | Try everything offline, without an OpenAI key. |
+| `python -m scripts.check_llm` | Test the AI connection (OpenAI or a gateway such as OmniRoute) before ingesting: can it be reached, do embeddings work. See [omniroute.md](omniroute.md). |
 | `python -m scripts.ingest --rebuild` | Delete this model's vectors and embed everything again. |
 | `python -m scripts.eval_retrieval` | Run the 20-question test set and report hit@5 (the Phase 3 gate is 0.8). |
 | Browser: <http://localhost:8000/docs> → `GET /api/knowledge/search` → **Try it out** | Run a search by hand and see the passages and citations. |
@@ -104,15 +105,24 @@ Retrieved text is data, never instructions:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | `hash` for offline use. Each model gets its own collections; after switching, run `scripts.ingest` again. |
-| `OPENAI_API_KEY` | (empty) | Needed for OpenAI embeddings. |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | `hash` for offline use, or the name of an embedding model your gateway offers. Each model gets its own collections; after switching, run `scripts.ingest` again. |
+| `OPENAI_API_KEY` | (empty) | Needed for OpenAI embeddings, unless you use a gateway. |
+| `LLM_BASE_URL`, `LLM_API_KEY` | (empty) | A gateway such as OmniRoute, instead of OpenAI itself ([omniroute.md](omniroute.md)). |
+| `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY` | (empty) | Only when embeddings must come from a different place than chat. |
 | `CHROMA_PERSIST_DIR` | `./data/chroma` | Where vectors are stored (git-ignored). |
 | `KNOWLEDGE_BASE_DIR` | `./knowledge_base` | Where the documents are. |
 | `RERANKER` | `heuristic` | `llm` re-scores results with `LLM_MODEL_FAST` (small cost per search), `none` keeps the search order. |
 | `RETRIEVAL_MIN_SIMILARITY` | model default (OpenAI 0.25, hash 0.2) | The relevance gate. `scripts.eval_retrieval` prints the range to choose from. |
 
-**Cost.** Embedding the whole knowledge base is about 5,500 tokens with
-`text-embedding-3-small`, a small fraction of one US cent. Each search embeds one short question.
+**Cost.** Embedding the whole knowledge base (78 documents, 223 chunks) is about 11,000
+tokens with `text-embedding-3-small`, a small fraction of one US cent. Each search embeds one
+short question. A gateway's free providers may cost nothing at all; see the privacy note in
+[omniroute.md](omniroute.md).
+
+**Other embedding models.** Models score similarity on different scales, so the default
+relevance gate (0.25) fits OpenAI's `text-embedding-3` family only. After choosing another
+model, run `python -m scripts.ingest` and `python -m scripts.eval_retrieval`, and set
+`RETRIEVAL_MIN_SIMILARITY` to the value the evaluation suggests.
 
 ## Evaluation
 
@@ -123,8 +133,8 @@ two off-topic questions that should return nothing.
 | Metric | Meaning | Offline (hash) baseline |
 | --- | --- | --- |
 | hit@5 | the right document is in the top 5 (gate: 0.8) | 0.95 |
-| hit@1 | the right document comes first | 0.70 |
-| MRR | 1 for first place, 1/2 for second, …, averaged | 0.81 |
+| hit@1 | the right document comes first | 0.75 |
+| MRR | 1 for first place, 1/2 for second, …, averaged | 0.83 |
 | section hit | the best section is in the top 5 | 0.90 |
 | no-answer pass rate | off-topic questions return nothing | 1.00 |
 
@@ -150,9 +160,11 @@ PDFs work too: put `<name>.meta.yaml` with the same fields next to the PDF.
 
 | What you see | Fix |
 | --- | --- |
-| `needs OPENAI_API_KEY in .env` | Add the key to `.env`, or use `--embedding-model hash` / `EMBEDDING_MODEL=hash`. |
+| `needs OPENAI_API_KEY in .env (or LLM_BASE_URL ...)` | Add the key to `.env`, set up a gateway ([omniroute.md](omniroute.md)), or use `--embedding-model hash` / `EMBEDDING_MODEL=hash`. |
 | `The knowledge base is empty … Run: python -m scripts.ingest` | Ingest first. After changing `EMBEDDING_MODEL`, ingest again. |
-| `OpenAI rejected the API key` | Check the key in `.env`, with no spaces or quotes. |
-| `rate limit or quota reached` | Wait a minute. If it repeats, check billing and limits on platform.openai.com. |
+| `... rejected the API key` | Check the key named in the message (`OPENAI_API_KEY`, or `LLM_API_KEY` for a gateway) in `.env`, with no spaces or quotes. |
+| `rate limit or quota reached` | Wait a minute. If it repeats, check billing and limits on platform.openai.com, or the free quota of the provider behind your gateway. |
+| `Could not reach the gateway ... Is it running?` | Start the gateway, then run `python -m scripts.check_llm`. |
+| `HTTP 404 (not found) ... ends in /v1` | The gateway address or the embedding model name is wrong: `python -m scripts.check_llm --list embed` shows the names. |
 | The search does not show a document you just added | Run `scripts.ingest`, then restart the backend. |
 | `Database: failed (…)` after ingesting | The vectors were stored. Start PostgreSQL and run again, or add `--skip-db`. |
