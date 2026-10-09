@@ -6,6 +6,7 @@ stands in for the real service, reached through the real OpenAI SDK, so these te
 prove what the app sends (address, key, JSON mode, tools) and how it reads the answers.
 """
 
+import httpx2
 import openai
 import pytest
 
@@ -285,6 +286,59 @@ def test_error_text_for_unusual_failures_is_still_plain() -> None:
     assert generic.message == "OpenAI: chat failed (OpenAIError)." and not generic.retryable
 
 
+def _status_error(cls: type[openai.APIStatusError], status: int, message: str) -> Exception:
+    request = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response = httpx2.Response(status, request=request)
+    return cls(message, response=response, body={"message": message})
+
+
+LONG_KEY = "sk-proj-" + "a" * 40 + "WXYZ"
+
+
+def test_the_report_says_which_key_and_where_it_came_from(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from_file = resolve_endpoint(settings(openai_api_key=LONG_KEY))
+    monkeypatch.setenv("OPENAI_API_KEY", LONG_KEY)
+    from_variable = resolve_endpoint(Settings(_env_file=None))
+
+    assert from_file.key_hint == from_variable.key_hint == "sk-proj-…WXYZ"
+    assert from_file.key_origin == "OPENAI_API_KEY in .env"
+    assert not from_file.key_from_environment and from_variable.key_from_environment
+    report = format_report(CheckReport(embedding_model="hash", chat=from_variable))
+    assert "key sk-proj-…WXYZ from the OPENAI_API_KEY environment variable" in report
+    assert "wins over .env" in report and LONG_KEY not in report
+
+
+def test_a_rejected_key_says_where_it_came_from(monkeypatch: pytest.MonkeyPatch) -> None:
+    rejected = _status_error(openai.AuthenticationError, 401, f"Incorrect API key {LONG_KEY}")
+    in_file = explain_error(
+        rejected, resolve_endpoint(settings(openai_api_key=LONG_KEY)), doing="chat"
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", LONG_KEY)
+    in_variable = explain_error(rejected, resolve_endpoint(Settings(_env_file=None)), doing="chat")
+
+    assert "platform.openai.com/api-keys" in in_file.message
+    assert "environment variable" in in_variable.message
+    assert "wins over .env" in in_variable.message
+    assert LONG_KEY not in in_file.message + in_variable.message
+
+
+def test_a_refused_request_is_not_mistaken_for_a_bad_key() -> None:
+    refused = _status_error(
+        openai.PermissionDeniedError, 403, f"Missing scopes: model.request for {LONG_KEY}"
+    )
+
+    failure = explain_error(
+        refused, resolve_endpoint(settings(openai_api_key=LONG_KEY)), doing="chat"
+    )
+
+    assert "accepted the API key" in failure.message and "HTTP 403" in failure.message
+    assert "Missing scopes: model.request" in failure.message
+    assert "Permissions to All" in failure.message
+    assert LONG_KEY not in failure.message and "[key]" in failure.message
+
+
 # ------------------------------------------------------------ the reranker
 
 
@@ -357,7 +411,7 @@ async def test_a_healthy_gateway_passes_every_check() -> None:
     assert report.exit_code == 0
     text = format_report(report)
     assert "Everything passed." in text
-    assert f"the gateway at {BASE_URL} (key from LLM_API_KEY)" in text
+    assert f"the gateway at {BASE_URL} (key sk-…-123 from LLM_API_KEY in .env)" in text
     assert KEY not in text
     assert all(call.authorization == f"Bearer {KEY}" for call in gateway.requests)
 

@@ -217,6 +217,31 @@ python -m scripts.check_llm
 JSON schema is fine (the agents fall back to JSON mode); a `warn` on tool calling means
 that model is a poor choice for the data agent.
 
+### The key is rejected
+
+The first lines of `check_llm` say which key was used (only its start and last four
+characters, for example `sk-proj-…a1b2`) and where it was read from:
+
+- **"...environment variable, which wins over .env"**: an `OPENAI_API_KEY` is set in
+  Windows itself (by System Properties, `setx` or an installer), and it beats `.env`.
+  Remove it in PowerShell, then close and reopen IntelliJ, because its terminals keep the
+  old value:
+
+  ```powershell
+  [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "User")
+  Remove-Item Env:OPENAI_API_KEY -ErrorAction SilentlyContinue
+  ```
+
+  If it is still there after reopening, it was set for the whole computer: Start menu,
+  "Edit the system environment variables", **Environment Variables**, and delete it under
+  **System variables** (needs an administrator).
+- **"OPENAI_API_KEY in .env"**: open <https://platform.openai.com/api-keys>. If none of
+  your keys ends with the same four characters, the key was deleted, revoked, cut short
+  when pasting, or belongs to another account. Create a new key and paste it after
+  `OPENAI_API_KEY=` on one line, with no quotes or spaces. Save, and run `check_llm` again.
+- **"accepted the API key but refused this request (HTTP 403)"**: the key works but is
+  restricted. Edit it on the same page and set **Permissions** to **All**.
+
 Optional settings: `LLM_MODEL_FALLBACK` (a second model, tried once if the first fails),
 `LLM_REASONING_EFFORT` (for reasoning models such as gpt-5.4-mini: `low` or `medium`
 think longer; empty uses the model's default), `LLM_STRUCTURED_OUTPUT` (`auto` is right

@@ -476,12 +476,13 @@ _LABEL = {"ok": " ok ", "warn": "WARN", "fail": "FAIL", "skip": "skip"}
 def _describe(endpoint: LLMEndpoint | None) -> str:
     if endpoint is None:
         return "not configured (no OPENAI_API_KEY and no LLM_BASE_URL)"
-    key = f"key from {endpoint.key_source}" if endpoint.has_key else "no key set"
-    return f"{endpoint.where} ({key})"
+    if not endpoint.has_key:
+        return f"{endpoint.where} (no key set)"
+    return f"{endpoint.where} (key {endpoint.key_hint} from {endpoint.key_origin})"
 
 
 def format_report(report: CheckReport) -> str:
-    """The text the check script prints. It never contains a key."""
+    """The text the check script prints. It shows a key's last four characters, never more."""
     if report.config_error:
         return f"Cannot check: {report.config_error}"
     lines = [

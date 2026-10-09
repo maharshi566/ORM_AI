@@ -21,6 +21,7 @@ accounting) is built on these pieces in ``chat_model.py``.
 """
 
 import ipaddress
+import os
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -54,6 +55,9 @@ class LLMEndpoint:
     base_url: str | None  # None means OpenAI itself
     api_key: str  # sent as the Bearer token; see __repr__
     key_source: str = ""  # the setting the key came from; "" means no key is set
+    # True when that setting is a real environment variable, which wins over .env
+    # (on Windows: one set in System Properties or with setx, often long forgotten).
+    key_from_environment: bool = False
 
     def __repr__(self) -> str:
         # Written by hand so that neither the key nor a password inside the URL can end
@@ -68,6 +72,27 @@ class LLMEndpoint:
     @property
     def has_key(self) -> bool:
         return bool(self.key_source)
+
+    @property
+    def key_hint(self) -> str:
+        """``sk-proj-…a1b2``: enough to find the key in the provider's list, never more."""
+        if not self.has_key:
+            return "none"
+        key = self.api_key
+        prefix = next(
+            (p for p in ("sk-proj-", "sk-svcacct-", "sk-or-", "sk-") if key.startswith(p)), ""
+        )
+        tail = key[-4:] if len(key) >= 16 else ""
+        return f"{prefix}…{tail}"
+
+    @property
+    def key_origin(self) -> str:
+        """Where the key was read from, for messages: '.env' or the environment variable."""
+        if not self.has_key:
+            return ""
+        if self.key_from_environment:
+            return f"the {self.key_source} environment variable, which wins over .env"
+        return f"{self.key_source} in .env"
 
     @property
     def where(self) -> str:
@@ -95,6 +120,11 @@ def _clean_base_url(raw: str, setting: str) -> str | None:
             "It must start with http:// or https://, for example http://localhost:20128/v1."
         )
     return None if url == OPENAI_URL else url  # spelling out OpenAI's address means OpenAI
+
+
+def _from_environment(setting: str) -> bool:
+    """True when ``setting`` is set as a real environment variable (any case, as Windows)."""
+    return bool(setting) and any(name.upper() == setting for name in os.environ)
 
 
 def _first_key(candidates: tuple[tuple[str, SecretStr | None], ...]) -> tuple[str, str]:
@@ -129,9 +159,10 @@ def resolve_endpoint(settings: Settings, purpose: Purpose = "chat") -> LLMEndpoi
         url = _clean_base_url(settings.llm_base_url, "LLM_BASE_URL")
         key, source = _first_key((llm_key, openai_key))
 
+    from_env = _from_environment(source)
     if url is None:
-        return LLMEndpoint(purpose, None, key, source) if key else None
-    return LLMEndpoint(purpose, url, key or PLACEHOLDER_KEY, source)
+        return LLMEndpoint(purpose, None, key, source, from_env) if key else None
+    return LLMEndpoint(purpose, url, key or PLACEHOLDER_KEY, source, from_env)
 
 
 def make_client(
@@ -184,6 +215,7 @@ def _server_detail(exc: openai.APIStatusError) -> str:
     if not isinstance(text, str):
         return ""
     text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\b(sk|lsv2)[-_][A-Za-z0-9_*-]{4,}", "[key]", text)  # never echo a key back
     return f" The server said: {text[:200]}" if text else ""
 
 
@@ -198,10 +230,23 @@ def explain_error(
     where = endpoint.where
     gateway = endpoint.is_gateway
 
-    if isinstance(exc, openai.AuthenticationError | openai.PermissionDeniedError):
-        if endpoint.has_key:
-            fix = f"Check {endpoint.key_source} in .env"
-            fix += " and the key shown in the gateway's dashboard." if gateway else "."
+    if isinstance(exc, openai.AuthenticationError):
+        if endpoint.has_key and endpoint.key_from_environment:
+            fix = (
+                f"The key comes from the {endpoint.key_source} environment variable on this "
+                "computer, which wins over .env. Remove that variable, or put a valid key in "
+                'it (docs/agents.md, "The key is rejected").'
+            )
+        elif endpoint.has_key and gateway:
+            fix = (
+                f"Check {endpoint.key_source} in .env and the key shown in the gateway's dashboard."
+            )
+        elif endpoint.has_key:
+            fix = (
+                f"Check {endpoint.key_source} in .env: compare its last four characters with "
+                "your keys at platform.openai.com/api-keys. A deleted or revoked key, or one "
+                "cut short when pasting, gives this error; create a new key if unsure."
+            )
         elif gateway:
             fix = (
                 "No key is set. Copy one from the gateway's dashboard into LLM_API_KEY "
@@ -210,6 +255,20 @@ def explain_error(
         else:
             fix = "Check OPENAI_API_KEY in .env."
         return LLMFailure(f"{where} rejected the API key. {fix}", retryable=False)
+
+    if isinstance(exc, openai.PermissionDeniedError):
+        hint = (
+            " Check the key's permissions in the gateway's dashboard."
+            if gateway
+            else " A restricted key needs permission for model requests: at "
+            "platform.openai.com/api-keys, edit the key and set Permissions to All (or allow "
+            "Model capabilities), and check the project may use this model."
+        )
+        return LLMFailure(
+            f"{where} accepted the API key but refused this request (HTTP 403)."
+            f"{_server_detail(exc)}{hint}",
+            retryable=False,
+        )
 
     if isinstance(exc, openai.NotFoundError):
         what = f"the model {model!r}" if model else "the model"
