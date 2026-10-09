@@ -1,0 +1,10 @@
+# Files Cursor's AI (chat, agent, Tab) must never read or send anywhere.
+# Cursor already skips .env files by default; listing them here makes it explicit.
+# Terminal commands are not covered, so never let the agent print these files.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+backend/data/chroma/

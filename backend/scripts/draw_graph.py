@@ -6,7 +6,8 @@ Usage (from backend/):
     python -m scripts.draw_graph --write   # update docs/agent-graph.md
     python -m scripts.draw_graph --check   # exit 1 if docs/agent-graph.md is out of date
 
-GitHub, VS Code and IntelliJ show the Mermaid block in docs/agent-graph.md as a picture.
+GitHub shows the Mermaid block in docs/agent-graph.md as a picture. In Cursor, the Markdown
+preview (Ctrl+Shift+V) draws it once a Mermaid preview extension is installed.
 """
 
 import argparse

@@ -173,11 +173,9 @@ everything but the password: <http://localhost:8080/?pgsql=postgres&username=orm
 In the left list click a table name, then **Select data** to see rows, or **SQL command** to
 type a query. When you are done: `docker compose stop adminer`.
 
-**2. IntelliJ's Database window.** This is in IntelliJ IDEA *Ultimate*; the free Community
-edition does not have it (use Adminer or DBeaver). Open **View → Tool Windows → Database**,
-click **+ → Data Source → PostgreSQL**, fill in the table above, click the blue *Download
-missing driver files* link if it shows one, press **Test Connection**, then **OK**. Open
-`orm_ai → public → tables`, and double-click a table to see its rows.
+**2. Cursor.** Cursor has no database window of its own; Adminer (above) or DBeaver
+(below) is the easy way. If you would rather stay inside Cursor, a database extension from
+the Extensions panel (Ctrl+Shift+X, search "PostgreSQL") works with the same details.
 
 **3. DBeaver (free desktop app, <https://dbeaver.io>).** **Database → New Database
 Connection → PostgreSQL**, fill in the table above, **Test Connection** (it offers to download

@@ -45,7 +45,7 @@ ever prints a key or a password written inside an address.
 
 ## 3. Step by step
 
-Everything below is typed in the IntelliJ terminal (PowerShell). Steps 1 to 4 start in the
+Everything below is typed in Cursor's terminal (PowerShell; open it with Ctrl+`). Steps 1 to 4 start in the
 project's top folder (`ORM_AI`, the one that contains `docker-compose.yml`).
 
 ### Step 1. Start OmniRoute

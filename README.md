@@ -99,7 +99,7 @@ ORM_AI/
 
 ## Run it locally
 
-All commands are for PowerShell, from the project root.
+All commands are for PowerShell, from the project root. In Cursor, open the folder with **File → Open Folder** and a terminal with **Ctrl+`** (or **Terminal → New Terminal**).
 
 **1. Create your `.env`**
 
@@ -221,6 +221,7 @@ Every response carries an `X-Request-ID` header, and every error uses one shape:
 ## Security notes
 
 - Secrets live only in `.env` (git-ignored). The frontend gets `NEXT_PUBLIC_API_URL` and nothing else.
+- `.cursorignore` keeps `.env` files away from Cursor's AI features. Don't paste keys into an AI chat, and don't let an agent run commands that print `.env`.
 - Logs mask keys that look like passwords, tokens or API keys.
 - Health errors show only the exception type, never hosts or credentials.
 - Tools are scoped to the caller's shop; consequential actions need a recorded approval; every action is idempotent and audit-logged ([docs/tools.md](docs/tools.md)).

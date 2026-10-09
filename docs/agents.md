@@ -224,8 +224,8 @@ characters, for example `sk-proj-…a1b2`) and where it was read from:
 
 - **"...environment variable, which wins over .env"**: an `OPENAI_API_KEY` is set in
   Windows itself (by System Properties, `setx` or an installer), and it beats `.env`.
-  Remove it in PowerShell, then close and reopen IntelliJ, because its terminals keep the
-  old value:
+  Remove it in PowerShell, then close every Cursor window and open Cursor again, because
+  its terminals keep the old value:
 
   ```powershell
   [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "User")
