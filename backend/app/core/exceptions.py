@@ -44,6 +44,13 @@ class NotFoundError(AppError):
     code = "not_found"
 
 
+class ForbiddenError(AppError):
+    """The record exists but belongs to someone else (for example another shop)."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "forbidden"
+
+
 class DependencyUnavailableError(AppError):
     """A database, cache, vector store, LLM or external API is down."""
 

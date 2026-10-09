@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     llm_timeout_seconds: float = 30.0
     llm_max_retries: int = 3
+    # Tried once when the main model still fails after its retries (not for a bad key).
+    llm_model_fallback: str = ""
+    # auto: strict JSON schema, falling back to JSON mode for models that refuse it.
+    llm_structured_output: Literal["auto", "json_schema", "json_object"] = "auto"
+    # For reasoning models only (e.g. low): sent as reasoning_effort. Empty = not sent.
+    llm_reasoning_effort: str = ""
 
     # --- Optional gateway (OmniRoute, LiteLLM, Ollama, ...) ----------------
     # Any server that speaks the OpenAI API. Empty LLM_BASE_URL = OpenAI itself.
@@ -70,6 +76,15 @@ class Settings(BaseSettings):
     # Embeddings may go elsewhere than chat. Empty = same place as chat.
     embedding_base_url: str = ""
     embedding_api_key: SecretStr | None = None
+
+    # --- Agents (Phase 4) -------------------------------------------------
+    # database: workflow state is saved in PostgreSQL after every step (needed to pause
+    # for approval and resume later). memory: kept in the process only (tests, demos).
+    checkpointer: Literal["database", "memory"] = "database"
+    agent_max_loops: int = 2  # "need more data" and "rewrite the answer" loops, each
+    agent_max_tool_calls: int = 8  # per data-retrieval visit
+    session_memory_turns: int = 10  # earlier messages the agents see
+    session_ttl_hours: int = 24  # how long Redis keeps a quiet conversation
 
     # --- Tracing (used from Phase 4) -------------------------------------
     langsmith_tracing: bool = False

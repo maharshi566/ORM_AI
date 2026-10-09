@@ -27,7 +27,7 @@ async def test_agents_only_get_their_own_tools(registry, make_ctx) -> None:
     assert write.error_code == "forbidden"
     assert registry.schemas_for("investigation") == []
     assert len(registry.schemas_for("data_retrieval")) == 13
-    assert len(registry.schemas_for("action")) == 7
+    assert len(registry.schemas_for("action")) == 8
     assert [s["function"]["name"] for s in registry.schemas_for("knowledge")] == [
         "search_knowledge"
     ]

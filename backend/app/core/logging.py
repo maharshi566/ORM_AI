@@ -14,13 +14,20 @@ import structlog
 
 # Keys whose values must never reach a log line.
 SENSITIVE_KEY_PARTS = ("password", "secret", "token", "api_key", "apikey", "authorization")
+# Token *counts* from model calls contain the word "token" but are not credentials.
+TOKEN_COUNT_KEYS = frozenset(
+    {"input_tokens", "output_tokens", "total_tokens", "prompt_tokens", "completion_tokens"}
+)
 MASK = "***"
 
 
 def mask_sensitive_fields(_logger: Any, _method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
     """Replace the value of any key that looks like a credential."""
     for key in list(event_dict):
-        if any(part in key.lower() for part in SENSITIVE_KEY_PARTS):
+        lowered = key.lower()
+        if lowered in TOKEN_COUNT_KEYS:
+            continue
+        if any(part in lowered for part in SENSITIVE_KEY_PARTS):
             event_dict[key] = MASK
     return event_dict
 

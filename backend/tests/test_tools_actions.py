@@ -439,6 +439,119 @@ async def test_returns(registry, make_ctx, seed_data) -> None:
     assert again.error_code == "conflict"
 
 
+# ---------------------------------------------------------- supplier follow-up
+
+
+def follow_up(po_id: str, issue: str, key: str) -> dict:
+    return {"purchase_order_id": po_id, "issue": issue, "idempotency_key": key}
+
+
+async def test_late_order_follow_up_needs_staff_and_escalates(
+    registry, make_ctx, seed_data, session_factory
+) -> None:
+    late = seed_data.edge_cases["late_purchase_order"]
+    args = follow_up(late["purchase_order_id"], "late", "t:follow:late")
+
+    denied = await act(registry, make_ctx("SHOP-002"), "follow_up_supplier", **args)
+    sent = await act(registry, make_ctx("SHOP-002", approval=STAFF), "follow_up_supplier", **args)
+    again = await act(registry, make_ctx("SHOP-002", approval=STAFF), "follow_up_supplier", **args)
+    tomorrow_same_day = await act(
+        registry,
+        make_ctx("SHOP-002", approval=STAFF),
+        "follow_up_supplier",
+        **follow_up(late["purchase_order_id"], "late", "t:follow:late:2"),
+    )
+
+    assert denied.error_code == "approval_required"
+    assert sent.ok, sent.error_message
+    assert sent.data["days_late"] == late["days_late"]
+    assert sent.data["escalate_to_owner"] is True  # 3+ days late: tell the owner
+    assert "owner decides" in sent.data["next_step"]  # 7 days late
+    assert late["purchase_order_id"] in sent.data["message"]
+    assert "x" in sent.data["sent_to"]  # the supplier's number is masked
+    assert again.data["replayed"] is True
+    assert tomorrow_same_day.error_code == "policy_blocked"  # once per order per day
+    async with session_factory() as session:
+        rows = (
+            await session.scalars(
+                select(Notification).where(Notification.purpose == "supplier_follow_up")
+            )
+        ).all()
+        log = await session.scalar(select(AuditLog).where(AuditLog.action == "follow_up_supplier"))
+    assert len(rows) == 1 and rows[0].supplier_id == sent.data["supplier_id"]
+    assert log.entity_id == late["purchase_order_id"]
+
+
+async def test_short_delivery_follow_up_lists_the_missing_items(
+    registry, make_ctx, seed_data
+) -> None:
+    short = seed_data.edge_cases["short_delivery"]
+
+    sent = await act(
+        registry,
+        make_ctx("SHOP-003", approval=STAFF),
+        "follow_up_supplier",
+        **follow_up(short["purchase_order_id"], "short", "t:follow:short"),
+    )
+
+    assert sent.ok, sent.error_message
+    [item] = sent.data["missing_items"]
+    assert item["product_id"] == short["product_id"]
+    assert item["missing"] == short["ordered"] - short["received"]
+    assert "credit note" in sent.data["message"]
+    assert "SOP-SHORT-001" in sent.data["next_step"]
+
+
+async def test_follow_up_refuses_orders_that_are_fine(registry, make_ctx, seed_data) -> None:
+    on_time = seed_data.edge_cases["low_stock_with_open_po"]["purchase_order_id"]  # due in 2 days
+    late = seed_data.edge_cases["late_purchase_order"]["purchase_order_id"]
+
+    not_late = await act(
+        registry,
+        make_ctx(approval=STAFF),
+        "follow_up_supplier",
+        **follow_up(on_time, "late", "t:follow:ontime"),
+    )
+    not_short = await act(
+        registry,
+        make_ctx("SHOP-002", approval=STAFF),
+        "follow_up_supplier",
+        **follow_up(late, "short", "t:follow:notshort"),
+    )
+    other_shop = await act(
+        registry,
+        make_ctx("SHOP-001", approval=STAFF),
+        "follow_up_supplier",
+        **follow_up(late, "late", "t:follow:othershop"),
+    )
+
+    assert not_late.error_code == "policy_blocked"
+    assert not_short.error_code == "policy_blocked"
+    assert other_shop.error_code == "not_found"  # SHOP-002's order is invisible to SHOP-001
+
+
+async def test_follow_up_messaging_failure_saves_nothing(
+    registry, make_ctx, seed_data, session_factory
+) -> None:
+    late = seed_data.edge_cases["late_purchase_order"]["purchase_order_id"]
+
+    failed = await act(
+        registry,
+        make_ctx("SHOP-002", approval=STAFF, faults=FaultInjector(FailureMode.SERVER_ERROR)),
+        "follow_up_supplier",
+        **follow_up(late, "late", "t:follow:fail"),
+    )
+
+    assert failed.error_code == "upstream_error"
+    async with session_factory() as session:
+        count = await session.scalar(
+            select(func.count())
+            .select_from(Notification)
+            .where(Notification.purpose == "supplier_follow_up")
+        )
+    assert count == 0
+
+
 # --------------------------------------------------------------------- cases
 
 

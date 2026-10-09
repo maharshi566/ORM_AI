@@ -1,8 +1,8 @@
 """Where language-model calls go, and the client that makes them.
 
-Every model call in the app (embeddings now, the agents from Phase 4) uses the
-OpenAI-style API. Gateways such as OmniRoute, LiteLLM and Ollama speak the same API,
-so moving between OpenAI and a gateway is configuration, not code:
+Every model call in the app (embeddings and the agents) uses the OpenAI-style API.
+Gateways such as OmniRoute, OpenRouter, LiteLLM and Ollama speak the same API, so
+moving between OpenAI and a gateway is configuration, not code:
 
     nothing set        -> OpenAI itself, using OPENAI_API_KEY
     LLM_BASE_URL set   -> that gateway, using LLM_API_KEY (or OPENAI_API_KEY)
@@ -16,8 +16,8 @@ builds the SDK client for it, and ``explain_error`` turns the SDK's exceptions i
 sentences a shopkeeper (or a beginner) can act on. Nothing else in the app reads the
 URL and key settings directly, and no key ever appears in a message or a log line.
 
-Phase 4 adds the wrapper the agents call (structured output, a fallback model, token
-accounting) on top of these pieces.
+The agents' client (structured output, tool calls, a fallback model, token
+accounting) is built on these pieces in ``chat_model.py``.
 """
 
 import ipaddress

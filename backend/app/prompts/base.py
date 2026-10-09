@@ -5,7 +5,7 @@ Keeping prompts as data makes them easy to review, version and test.
 
 from dataclasses import dataclass
 
-TODO = "TODO: written in Phase 4."
+TODO = "Not written yet (see the agent's phase in the build plan)."
 
 
 @dataclass(frozen=True)

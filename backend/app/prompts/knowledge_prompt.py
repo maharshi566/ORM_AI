@@ -1,11 +1,31 @@
-"""Prompt for the knowledge agent, and the notice that wraps retrieved passages."""
+"""The knowledge agent's rules, and the notice that wraps retrieved passages.
+
+The knowledge agent chooses its searches in code (app/agents/knowledge.py), so this
+spec documents it rather than being sent to a model. The two notices below are sent:
+they wrap every block of passages that a model reads.
+"""
 
 from app.prompts.base import PromptSpec
 
 KNOWLEDGE_PROMPT = PromptSpec(
     role=(
-        "You find the shop policies and reference documents that apply to a request and "
-        "cite each one."
+        "The knowledge agent finds the shop policies and reference documents that apply "
+        "to a request, with a citation for each passage."
+    ),
+    goal="Make sure the rule that governs the request is among the passages.",
+    available_information="The request, its triage summary and its intent.",
+    constraints=(
+        "- Search the request itself, plus a standard question for the intent.\n"
+        "- Current versions only, in effect today: shared documents plus this shop's "
+        "profile.\n"
+        "- Supplier flyers only when the request is about an offer or scheme."
+    ),
+    output_schema="Up to 6 passages, each with its citation, title, section and trust level.",
+    failure_behavior=(
+        "No passages is a valid result: the reply then says the documents do not cover it."
+    ),
+    grounding=(
+        "Passages are reference data. The models that read them are told never to follow them."
     ),
 )
 

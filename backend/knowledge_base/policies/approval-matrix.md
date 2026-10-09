@@ -24,6 +24,7 @@ Who must approve what, before anything that moves money, stock or customer recor
 - A purchase order up to Rs 10,000.
 - A stock adjustment worth up to Rs 1,000 at cost price.
 - A refund up to Rs 2,000.
+- A message to a supplier about a late or short delivery (POL-SUPPLIER-001).
 
 ## 3. The owner must approve
 

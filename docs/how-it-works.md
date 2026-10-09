@@ -1,4 +1,4 @@
-# How ORM_AI works (Phases 0–3)
+# How ORM_AI works (Phases 0–4)
 
 This guide explains what is built so far and how the pieces fit together. Read it
 top to bottom once. After that, use the other guides as references:
@@ -6,20 +6,21 @@ top to bottom once. After that, use the other guides as references:
 - [database.md](database.md): the tables, how the synthetic data is made, migrations
 - [tools.md](tools.md): every tool the agents can call, and the rules they enforce
 - [rag.md](rag.md): knowledge search, from documents to cited passages
+- [agents.md](agents.md): the agents, how a question is answered, and choosing a model
 - [supabase.md](supabase.md): using Supabase as the database
 - [omniroute.md](omniroute.md): using OmniRoute (or another gateway) instead of a plain OpenAI key
 
 ## 1. The big picture
 
 ORM_AI is a backend (FastAPI, Python) and a frontend (Next.js), with PostgreSQL
-for records and Redis for short-lived data. The AI part (Phases 4–5) is a set of
-agents that **never touch the database directly**: they call typed **tools**, and
+for records and Redis for short-lived data. The AI part (Phase 4, with approvals in
+Phase 5) is a set of agents that **never touch the database directly**: they call typed **tools**, and
 the tools enforce the shop's rules.
 
 ```mermaid
 flowchart LR
     UI[Next.js frontend] -->|HTTP + JSON| API[FastAPI backend]
-    API --> AG["Agents (Phase 4)"]
+    API --> AG["Agents (LangGraph)"]
     AG -->|tool calls only| REG[Tool registry]
     REG --> RT[Read tools]
     REG --> AT[Action tools]
@@ -36,9 +37,10 @@ Built so far:
 | Phase | What it gives you | Where it lives |
 | --- | --- | --- |
 | 0 Foundations | A running API with config, logging, request IDs, error handling, health check, Docker, tests, CI | `backend/app/main.py`, `core/`, `config/` |
-| 1 Data | 24 database tables, migrations, 91 days of synthetic data for 50 shops, 78 knowledge documents (28 shared, one profile per shop) | `models/`, `migrations/`, `seed/`, `knowledge_base/` |
-| 2 Tools | 20 typed tools (13 read, 7 action), with approvals, idempotency, retries and logging | `tools/` |
+| 1 Data | 24 database tables (27 with Phase 4's checkpoint tables), migrations, 91 days of synthetic data for 50 shops, 78 knowledge documents (28 shared, one profile per shop) | `models/`, `migrations/`, `seed/`, `knowledge_base/` |
+| 2 Tools | 21 typed tools (13 read, 8 action), with approvals, idempotency, retries and logging | `tools/` |
 | 3 Knowledge search | Documents chunked and embedded into ChromaDB; hybrid search with citations; the `search_knowledge` tool; a 20-question evaluation | `rag/`, `scripts/ingest.py`, `evaluation/` |
+| 4 Agents | A LangGraph graph of agents (triage, supervisor, data retrieval, knowledge, investigation, response, validator) behind `POST /api/chat`, with checkpoints, conversation memory and a 10-case evaluation | `agents/`, `graph/`, `services/chat_*.py`, [agents.md](agents.md) |
 
 ## 2. What happens when a request comes in (Phase 0)
 
@@ -246,10 +248,12 @@ does chat work, can the model answer in JSON and call tools, do embeddings work.
 From `backend/`, with Docker's Postgres and Redis running and `(.venv)` active:
 
 ```powershell
-alembic upgrade head            # create the 24 tables
+alembic upgrade head            # create the tables
 python -m scripts.seed          # load the 50 synthetic shops
 python -m scripts.ingest        # embed the knowledge base (needs an AI key or gateway)
 python -m scripts.eval_retrieval  # retrieval quality: hit@5 must be at least 0.8
+python -m scripts.check_llm     # can the chosen models chat, follow a schema, call tools?
+python -m scripts.eval_agent    # the agents on 10 cases (needs a model; a few cents)
 pytest                          # the whole test suite, no API key needed
 uvicorn app.main:app --reload   # then open http://localhost:8000/docs
 ```
@@ -286,9 +290,19 @@ What this project does about it:
 - **A rule for Phase 4.** Every node in the agent graph is `async def`, and anything blocking
   goes through `asyncio.to_thread`.
 
-## 8. What comes next
+## 8. The agents (Phase 4)
+
+`POST /api/chat` runs a message through a LangGraph graph of agents. Triage works out
+what is asked; the supervisor sends it to the specialists it needs (records, rules, an
+investigation); the response agent writes the reply; the validator checks it before
+it goes out. Models only ever *ask* for tools and *propose* actions: code runs the
+tools, checks every ID and citation, and (until Phase 5) runs no action at all.
+Everything is explained, with diagrams, in [agents.md](agents.md).
+
+## 9. What comes next
 
 | Phase | Builds on | Adds |
 | --- | --- | --- |
-| 4 Agent graph | the tools and their JSON schemas (`registry.schemas_for(agent)`) | LangGraph state graph, the 8 agents, `/api/chat` |
-| 5 Approval | `ApprovalGrant`, `approvals` and `audit_logs` tables | Policy gate, pause/resume with `interrupt()`, the validator |
+| 5 Approval | `ApprovalGrant`, the `human_review` node, the checkpointer, `approvals` and `audit_logs` | Policy gate, pause/resume with `interrupt()`, the Action agent, guardrails |
+| 6 API | `POST /api/chat`, the agent events (`AgentDeps.on_event`) | All endpoints, a live progress stream, rate limits, uploads |
+| 7 Frontend | the chat response (sources, steps, proposed actions) | Chat, workflow, sources, approval and admin pages |

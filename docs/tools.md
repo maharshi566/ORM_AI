@@ -46,6 +46,7 @@ rules in effect. Details: [rag.md](rag.md).
 | `send_payment_reminder` | WhatsApp/SMS reminder | none (it follows the reminder policy exactly) | owes nothing; not 7+ days past due; disputed; reminded in the last 7 days; 3 unanswered reminders; paid in the last 3 days; outside 9 am to 8 pm |
 | `update_selling_price` | Change a selling price | Always the owner | above MRP; below cost (warns when margin is under 8%) |
 | `process_return` | Return a whole bill, restock, refund | Staff up to Rs 2,000, owner above | older than 7 days; already returned |
+| `follow_up_supplier` | Message the supplier about a late or short purchase order, and say whether the owner must now be told (POL-SUPPLIER-001, SOP-SHORT-001) | Staff | not late yet, or nothing missing; the order is not this shop's; already messaged about it in the last 24 hours |
 | `create_case` | Open a case to track a problem | none | (an identical open case is reused) |
 | `resolve_case` | Close a case with its resolution | Staff | |
 

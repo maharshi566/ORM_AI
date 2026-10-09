@@ -1,0 +1,85 @@
+# Agent test set for the Phase 4 gate: the 10 normal cases.
+#
+# Each case is one shopkeeper message to one shop, about a planted edge case in the
+# synthetic data (backend/data/seed/EDGE_CASES.md). A case passes when:
+#
+#   intent     the triage intent is one of these
+#   records    every one of these IDs appears in the records the tools returned
+#   documents  the reply cites at least one of these documents (empty = no rule needed)
+#   grounded   the validator passed the reply (PASS), so every citation and record ID
+#              in it is real, and it claims no action as done
+#
+# Gate: at least 8 of 10 intents right, and at least 8 of 10 replies grounded and
+# cited as expected. Run: python -m scripts.eval_agent
+# Phase 8 grows this into the full 40-case evaluation.
+
+cases:
+  - id: A01
+    shop_id: SHOP-001
+    message: Which products are running low, and should I reorder any of them?
+    intent: [reorder, stock_status]
+    records: [PRD-0003]
+    documents: [POL-REORDER-001]
+
+  - id: A02
+    shop_id: SHOP-001
+    message: How much does CUST-0001 owe? Can I give them more on credit today?
+    intent: [customer_credit]
+    records: [CUST-0001]
+    documents: [POL-CREDIT-001, FAQ-002]
+
+  - id: A03
+    shop_id: SHOP-001
+    message: Can I send CUST-0004 a payment reminder today?
+    intent: [payment_reminder]
+    records: [CUST-0004]
+    documents: [POL-REMINDER-001]
+
+  - id: A04
+    shop_id: SHOP-002
+    message: Purchase order PO-00585 still has not arrived. What should I do?
+    intent: [supplier_issue]
+    records: [PO-00585]
+    documents: [POL-SUPPLIER-001]
+
+  - id: A05
+    shop_id: SHOP-003
+    message: PO-00586 arrived with only 20 reams of A4 paper instead of 30. What now?
+    intent: [supplier_issue]
+    records: [PO-00586]
+    documents: [SOP-SHORT-001, POL-SUPPLIER-001]
+
+  - id: A06
+    shop_id: SHOP-004
+    message: The margin on PRD-0085 looks wrong. Is it priced correctly?
+    intent: [pricing]
+    records: [PRD-0085]
+    documents: [POL-PRICING-001, SOP-PRICE-001]
+
+  - id: A07
+    shop_id: SHOP-005
+    message: What were my total sales last week?
+    intent: [sales_report]
+    records: []
+    documents: []
+
+  - id: A08
+    shop_id: SHOP-001
+    message: I counted PRD-0002 today and found 6 fewer than the system shows. What should I do?
+    intent: [stock_discrepancy]
+    records: [PRD-0002]
+    documents: [SOP-COUNT-001, POL-ADJUST-001]
+
+  - id: A09
+    shop_id: SHOP-005
+    message: A customer wants to return bill SALE-005668. Is that allowed?
+    intent: [returns]
+    records: [SALE-005668]
+    documents: [POL-RETURNS-001]
+
+  - id: A10
+    shop_id: SHOP-001
+    message: What is the credit limit for a household customer?
+    intent: [policy_question, customer_credit]
+    records: []
+    documents: [POL-CREDIT-001]

@@ -1,9 +1,10 @@
 """A small fake of an OpenAI-compatible gateway (the kind OmniRoute is), for tests.
 
 It answers just enough of the API: ``GET /v1/models``, ``POST /v1/chat/completions``
-(plain, JSON mode and tool calls) and ``POST /v1/embeddings``. Tests reach it through an
-in-process HTTP client, so no network, port or real service is involved, and every
-request is recorded in ``gateway.requests`` so a test can check what the app sent.
+(plain, JSON mode, strict JSON schema and tool calls) and ``POST /v1/embeddings``.
+Tests reach it through an in-process HTTP client, so no network, port or real service
+is involved, and every request is recorded in ``gateway.requests`` so a test can check
+what the app sent.
 """
 
 import json
@@ -42,6 +43,8 @@ class FakeGateway:
     models: tuple[str, ...] = ("auto", "auto/fast", "auto/smart", "fake/embed-small")
     embedding_models: tuple[str, ...] = ("fake/embed-small",)
     json_mode: bool = True  # False: JSON mode is rejected with 400
+    json_schema: bool = True  # False: strict JSON-schema output is rejected with 400
+    replies: list[str] = field(default_factory=list)  # JSON-mode/schema answers, in order
     tool_calls: bool = True  # False: tools are ignored and the model answers in text
     dimensions: int = 8
     fail: dict[str, int] = field(default_factory=dict)  # path -> status to answer with
@@ -110,10 +113,20 @@ class FakeGateway:
             }
             message = {"role": "assistant", "content": None, "tool_calls": [call]}
             finish = "tool_calls"
-        elif body.get("response_format", {}).get("type") == "json_object":
+        elif (body.get("response_format") or {}).get("type") == "json_schema":
+            if not self.json_schema:
+                return _error(
+                    400,
+                    "Invalid parameter: 'response_format' of type 'json_schema' is not "
+                    "supported with this model.",
+                )
+            message["content"] = self.replies.pop(0) if self.replies else '{"status": "ok"}'
+        elif (body.get("response_format") or {}).get("type") == "json_object":
             if not self.json_mode:
                 return _error(400, "response_format json_object is not supported.")
-            message["content"] = self._json_reply(last_user)
+            message["content"] = (
+                self.replies.pop(0) if self.replies else self._json_reply(last_user)
+            )
 
         return JSONResponse(
             {

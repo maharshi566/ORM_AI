@@ -6,6 +6,7 @@ embedding endpoints (OpenAI, or a gateway such as OmniRoute) and prints one line
     Model list    the endpoint answers and lists its models
     Chat          a model replies to a one-line prompt
     JSON mode     the model can be told to answer in JSON    (RERANKER=llm needs it)
+    JSON schema   the model can follow a strict JSON schema  (the agents prefer it)
     Tool calling  the model can call a tool                  (the Phase 4 agents need it)
     Embeddings    the embedding model returns vectors        (knowledge search needs it)
 
@@ -55,6 +56,23 @@ TOOL = {
 
 JSON_ADVICE = "Keep RERANKER=heuristic, or choose a model that supports JSON mode."
 TOOLS_ADVICE = "The Phase 4 agents depend on tool calling: choose a model that supports it."
+SCHEMA_ADVICE = (
+    "The agents still work: they fall back to JSON mode with the schema in the prompt, "
+    "which is a little less reliable. A model with structured-output support is better."
+)
+STATUS_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "StatusCheck",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {"status": {"type": "string", "enum": ["ok"]}},
+            "required": ["status"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 # What can be wrong with a reply that is not shaped like an OpenAI-style answer.
 _BAD_SHAPE = (AttributeError, IndexError, KeyError, TypeError, ValueError)
@@ -174,6 +192,22 @@ async def _json_mode(client: AsyncOpenAI, model: str) -> Outcome:
             JSON_ADVICE,
         )
     return "ok", f"{model} returned valid JSON", ""
+
+
+async def _json_schema(client: AsyncOpenAI, model: str) -> Outcome:
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": 'Return the status "ok".'}],
+        response_format=STATUS_SCHEMA,
+    )
+    text = (response.choices[0].message.content or "").strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = None
+    if not isinstance(data, dict) or data.get("status") != "ok":
+        return "warn", f"{model} did not follow the JSON schema ({text[:40]!r}).", SCHEMA_ADVICE
+    return "ok", f"{model} followed a strict JSON schema", ""
 
 
 async def _tool_calling(client: AsyncOpenAI, model: str) -> Outcome:
@@ -375,6 +409,17 @@ async def _check_chat(
                 work=lambda n=name: _json_mode(client, n),
                 on_error="warn",
                 error_hint=JSON_ADVICE,
+            )
+        )
+        report.probes.append(
+            await _guarded(
+                "JSON schema",
+                endpoint,
+                doing="chat (JSON schema)",
+                model=name,
+                work=lambda n=name: _json_schema(client, n),
+                on_error="warn",
+                error_hint=SCHEMA_ADVICE,
             )
         )
         report.probes.append(

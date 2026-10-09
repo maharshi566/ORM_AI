@@ -54,6 +54,15 @@ def test_sensitive_log_fields_are_masked() -> None:
     assert masked["shop"] == "A1"
 
 
+def test_token_counts_are_not_mistaken_for_secrets() -> None:
+    event = {"input_tokens": 120, "output_tokens": 30, "access_token": "abc", "csrf_token": "x"}
+
+    masked = mask_sensitive_fields(None, "info", dict(event))
+
+    assert (masked["input_tokens"], masked["output_tokens"]) == (120, 30)
+    assert masked["access_token"] == MASK and masked["csrf_token"] == MASK
+
+
 def test_skeleton_modules_import() -> None:
     state: AgentState = {"workflow_id": "wf-1", "user_query": "How much rice is left?"}
 

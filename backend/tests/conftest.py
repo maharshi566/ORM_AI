@@ -206,3 +206,71 @@ def kb_store(tmp_path_factory: pytest.TempPathFactory) -> VectorStore:
 @pytest.fixture
 def knowledge(kb_store: VectorStore) -> KnowledgeRetriever:
     return KnowledgeRetriever(kb_store, HashEmbedder())
+
+
+# ---------------------------------------------------------------- agent tests
+
+
+@pytest.fixture
+def make_deps(session_factory, registry, knowledge):
+    """AgentDeps for running the graph on the seeded database with a fake model."""
+    from app.graph.deps import AgentDeps
+    from tests.fake_llm import RuleBasedLLM
+
+    def factory(
+        llm=None,
+        *,
+        faults: FaultInjector | None = None,
+        record_to_db: bool = False,
+        with_knowledge: bool = True,
+        **settings_overrides,
+    ) -> AgentDeps:
+        return AgentDeps(
+            settings=Settings(_env_file=None, **settings_overrides),
+            llm=llm or RuleBasedLLM(),
+            registry=registry,
+            session_factory=session_factory,
+            now=ANCHOR_NOON,
+            knowledge=knowledge if with_knowledge else None,
+            clients={
+                "supplier_api": MockSupplierAPI(faults),
+                "messaging_api": MockMessagingAPI(faults),
+            },
+            record_to_db=record_to_db,
+        )
+
+    return factory
+
+
+@pytest.fixture
+def run_agent():
+    """Run the whole graph once and return the final state."""
+    import uuid
+
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from app.graph.workflow import RECURSION_LIMIT, compile_graph
+
+    async def runner(
+        deps,
+        message: str,
+        *,
+        shop_id: str = "SHOP-001",
+        history: list[dict] | None = None,
+        checkpointer=None,
+        workflow_id: str | None = None,
+    ) -> dict:
+        workflow_id = workflow_id or str(uuid.uuid4())
+        graph = compile_graph(checkpointer or InMemorySaver())
+        state = {
+            "workflow_id": workflow_id,
+            "session_id": "test-session",
+            "user_id": None,
+            "shop_id": shop_id,
+            "user_query": message,
+            "conversation_history": history or [],
+        }
+        config = {"configurable": {"thread_id": workflow_id}, "recursion_limit": RECURSION_LIMIT}
+        return await graph.ainvoke(state, config=config, context=deps)
+
+    return runner

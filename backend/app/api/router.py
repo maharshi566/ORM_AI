@@ -2,14 +2,14 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import health, knowledge
+from app.api.routes import chat, health, knowledge
 
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(knowledge.router)  # Phase 3: GET /knowledge/search
+api_router.include_router(chat.router)  # Phase 4: POST /chat, GET /chat/graph
 
 # Added in later phases (spec section 20):
-# Phase 4: POST /chat                       -> routes/chat.py
 # Phase 6: POST /agent/run                  -> routes/agent.py
 # Phase 6: POST /documents/upload, /ingest  -> routes/documents.py
 # Phase 6: GET  /sessions/{session_id}      -> routes/sessions.py

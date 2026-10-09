@@ -346,9 +346,11 @@ async def test_a_healthy_gateway_passes_every_check() -> None:
         ("Model list", "ok"),
         ("Chat", "ok"),
         ("JSON mode", "ok"),
-        ("Tool calling", "ok"),  # the three checks above are for auto/fast ...
+        ("JSON schema", "ok"),
+        ("Tool calling", "ok"),  # the four checks above are for auto/fast ...
         ("Chat", "ok"),
         ("JSON mode", "ok"),
+        ("JSON schema", "ok"),
         ("Tool calling", "ok"),  # ... and these for auto/smart
         ("Embeddings", "ok"),
     ]
@@ -358,6 +360,15 @@ async def test_a_healthy_gateway_passes_every_check() -> None:
     assert f"the gateway at {BASE_URL} (key from LLM_API_KEY)" in text
     assert KEY not in text
     assert all(call.authorization == f"Bearer {KEY}" for call in gateway.requests)
+
+
+async def test_missing_json_schema_support_is_a_warning_not_a_failure() -> None:
+    report = await check(FakeGateway(api_key=KEY, json_schema=False))
+
+    schema = [probe for probe in report.probes if probe.name == "JSON schema"]
+    assert schema and all(probe.status == "warn" for probe in schema)
+    assert "fall back to JSON mode" in schema[0].hint
+    assert report.exit_code == 0
 
 
 async def test_missing_json_mode_is_a_warning_with_advice() -> None:

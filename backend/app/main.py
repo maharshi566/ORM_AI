@@ -15,6 +15,7 @@ from app.config.settings import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
+from app.core.tracing import configure_tracing
 from app.models.database import dispose_engine, init_engine
 from app.services.redis_client import close_redis, init_redis
 
@@ -24,6 +25,7 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
+    configure_tracing(settings)
     init_engine(settings.database_url, transaction_pooler=settings.db_transaction_pooler)
     init_redis(settings.redis_url)
     logger.info("app_started", environment=settings.app_env, version=settings.app_version)
@@ -51,6 +53,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.knowledge_retriever = None  # built on the first search (see api/routes/knowledge.py)
     app.state.knowledge_lock = asyncio.Lock()
+    app.state.agent_runtime = None  # built on the first chat (see services/chat_service.py)
+    app.state.agent_lock = asyncio.Lock()
     app.dependency_overrides[get_settings] = lambda: settings
 
     # The last middleware added runs first, so request IDs wrap everything else.

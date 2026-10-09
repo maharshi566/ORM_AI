@@ -18,9 +18,17 @@ pyyaml==6.0.3
 
 # --- Phase 3: knowledge search (RAG) ---
 chromadb==1.5.9       # vector database, runs inside the backend process
-openai==3.24.0        # embeddings now; chat models from Phase 4
+openai==3.24.0        # embeddings and chat models (OpenAI or any compatible gateway)
 pypdf==6.19.0         # reads PDF documents in knowledge_base/
 
+# --- Phase 4: the agent graph ---
+langgraph==1.2.12     # state graph, checkpoints, interrupts (brings langgraph-checkpoint)
+langchain-core==1.6.5 # LangChain's base: runnables, callbacks and tracing hooks
+langsmith==0.14.1     # optional tracing (LANGSMITH_TRACING=true)
+# Not used on purpose: langchain-openai (app/services/chat_model.py talks to the
+# OpenAI API itself, so gateways, errors and fallbacks behave the same everywhere) and
+# langgraph-checkpoint-postgres (it needs psycopg, which cannot run on Windows'
+# default event loop; app/graph/checkpointer.py saves checkpoints with SQLAlchemy).
+
 # --- Added in later phases ---
-# Phase 4: langgraph, langchain, langchain-openai, langgraph-checkpoint-postgres, langsmith
 # Phase 6: slowapi, python-multipart

@@ -125,7 +125,7 @@ async def test_the_search_endpoint_never_blocks_the_loop(
         built_on.append(threading.get_ident())
         return factory.build_retriever(*args, **kwargs)
 
-    monkeypatch.setattr("app.api.routes.knowledge.build_retriever", counting_build)
+    monkeypatch.setattr("app.services.knowledge_service.build_retriever", counting_build)
     settings = Settings(
         _env_file=None,
         app_env="test",

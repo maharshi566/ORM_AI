@@ -37,6 +37,7 @@ from app.tools.api_tools import MockMessagingAPI, MockSupplierAPI
 from app.tools.base import ToolContext, ToolError, ToolErrorCode, ToolInput, ToolOutput, ToolSpec
 from app.tools.helpers import (
     audit,
+    days_late,
     get_customer_row,
     get_product,
     get_sale_row,
@@ -59,6 +60,9 @@ REMINDER_GAP_DAYS = 7
 REMINDER_MAX_UNANSWERED = 3
 REMINDER_HOURS = (9, 20)  # 9:00 am to 8:00 pm
 MIN_MARGIN_PERCENT = 8.0
+SUPPLIER_OWNER_AFTER_DAYS_LATE = 3  # POL-SUPPLIER-001 §3: tell the owner, open a case
+SUPPLIER_DECIDE_AFTER_DAYS_LATE = 7  # the owner decides whether to cancel
+SUPPLIER_FOLLOW_UP_GAP_HOURS = 24  # one follow-up per order per day
 
 IdempotencyKey = Field(
     min_length=8,
@@ -611,6 +615,225 @@ def _refund_method(payment_mode: str) -> str:
     return "credit_balance_reduced" if payment_mode == "credit" else payment_mode
 
 
+# --------------------------------------------------------- supplier follow-up
+
+
+class FollowUpSupplierInput(ToolInput):
+    purchase_order_id: str = Field(min_length=3, max_length=20, description="e.g. PO-00585")
+    issue: Literal["late", "short"] = Field(
+        description="late: the order has not arrived after its expected date. "
+        "short: it arrived with fewer items than ordered."
+    )
+    channel: Literal["whatsapp", "sms"] = "whatsapp"
+    idempotency_key: str = IdempotencyKey
+
+
+class MissingItem(ToolOutput):
+    product_id: str
+    product_name: str
+    ordered: int
+    received: int
+    missing: int
+
+
+class FollowUpSupplierOutput(ToolOutput):
+    notification_id: int
+    purchase_order_id: str
+    supplier_id: str
+    supplier_name: str
+    sent_to: str | None = Field(description="Masked phone number")
+    channel: str
+    issue: str
+    days_late: int
+    missing_items: list[MissingItem]
+    message: str
+    escalate_to_owner: bool = Field(
+        description="True when POL-SUPPLIER-001 says the owner must now be told and a case opened"
+    )
+    next_step: str
+    replayed: bool = False
+
+
+def _follow_up_message(
+    shop_name: str, contact: str, po: PurchaseOrder, late_by: int, missing: list[MissingItem]
+) -> str:
+    if not missing:
+        expected = f"{po.expected_on:%d %b %Y}" if po.expected_on else "the agreed date"
+        return (
+            f"Namaste {contact}, this is {shop_name}. Our order {po.id} was due on {expected} "
+            f"and has not arrived yet ({late_by} days late). Please share the delivery date. "
+            "Thank you."
+        )
+    lines = "; ".join(
+        f"{item.product_name}: ordered {item.ordered}, received {item.received}" for item in missing
+    )
+    return (
+        f"Namaste {contact}, this is {shop_name}. Order {po.id} arrived short ({lines}). "
+        "Please send the missing items with the next delivery, or a credit note against the "
+        "next invoice. Thank you."
+    )
+
+
+async def follow_up_supplier(
+    ctx: ToolContext, args: FollowUpSupplierInput
+) -> FollowUpSupplierOutput:
+    """POL-SUPPLIER-001 section 3 (late) and SOP-SHORT-001 (short): message the supplier."""
+    po = await ctx.session.scalar(
+        select(PurchaseOrder).where(
+            PurchaseOrder.id == args.purchase_order_id, PurchaseOrder.shop_id == ctx.shop_id
+        )
+    )
+    if po is None:
+        raise ToolError(
+            ToolErrorCode.NOT_FOUND, f"No purchase order {args.purchase_order_id} in this shop."
+        )
+    supplier = await get_supplier_row(ctx, po.supplier_id)
+    late_by = days_late(po, ctx.today)
+    names = {
+        p.id: p.name
+        for p in (
+            await ctx.session.scalars(
+                select(Product).where(Product.id.in_([i.product_id for i in po.items]))
+            )
+        ).all()
+    }
+    missing = [
+        MissingItem(
+            product_id=i.product_id,
+            product_name=names.get(i.product_id, i.product_id),
+            ordered=i.quantity_ordered,
+            received=i.quantity_received,
+            missing=i.quantity_ordered - i.quantity_received,
+        )
+        for i in po.items
+        if i.quantity_received < i.quantity_ordered
+    ]
+    escalate = late_by >= SUPPLIER_OWNER_AFTER_DAYS_LATE if args.issue == "late" else True
+    if args.issue == "late":
+        if late_by >= SUPPLIER_DECIDE_AFTER_DAYS_LATE:
+            next_step = (
+                f"{late_by} days late: the owner decides whether to cancel and order from "
+                "another supplier (POL-SUPPLIER-001 §3). Do not place a second order meanwhile."
+            )
+        elif escalate:
+            next_step = "Tell the owner and record it in a case (POL-SUPPLIER-001 §3)."
+        else:
+            next_step = "Wait for the supplier's delivery date (POL-SUPPLIER-001 §3)."
+    else:
+        next_step = (
+            "Open a case with the order number and the missing quantity, and close it when the "
+            "items or a credit note arrive (SOP-SHORT-001). Do not reorder the missing items yet."
+        )
+
+    existing = await ctx.session.scalar(
+        select(Notification).where(Notification.idempotency_key == args.idempotency_key)
+    )
+    if existing is not None:
+        return FollowUpSupplierOutput(
+            notification_id=existing.id,
+            purchase_order_id=po.id,
+            supplier_id=supplier.id,
+            supplier_name=supplier.name,
+            sent_to=mask_phone(existing.recipient),
+            channel=str(existing.channel),
+            issue=args.issue,
+            days_late=late_by,
+            missing_items=missing if args.issue == "short" else [],
+            message=existing.message,
+            escalate_to_owner=escalate,
+            next_step=next_step,
+            replayed=True,
+        )
+
+    if args.issue == "late":
+        if str(po.status) != "placed":
+            raise blocked(
+                f"{po.id} is {po.status}, not waiting for delivery.", status=str(po.status)
+            )
+        if late_by < 1:
+            expected = po.expected_on.isoformat() if po.expected_on else None
+            raise blocked(f"{po.id} is not late yet.", expected_on=expected)
+        missing = []
+    else:
+        if str(po.status) not in {"partially_received", "received"} or not missing:
+            raise blocked(
+                f"{po.id} has no short delivery to claim: every item arrived in full or it "
+                "has not been delivered yet.",
+                status=str(po.status),
+            )
+
+    since = ctx.now - timedelta(hours=SUPPLIER_FOLLOW_UP_GAP_HOURS)
+    recent = await ctx.session.scalar(
+        select(Notification).where(
+            Notification.shop_id == ctx.shop_id,
+            Notification.supplier_id == supplier.id,
+            Notification.purpose == "supplier_follow_up",
+            Notification.message.contains(po.id),
+            Notification.created_at >= since,
+        )
+    )
+    if recent is not None:
+        raise blocked(
+            f"The supplier was already messaged about {po.id} in the last 24 hours.",
+            notification_id=recent.id,
+        )
+
+    # Messaging a supplier speaks for the shop, and the approval matrix does not list it
+    # among the things ORM_AI may do alone, so a person confirms it (POL-APPROVAL-001 §2).
+    ctx.require_approval("staff", f"messaging {supplier.name} about {po.id}")
+
+    shop = await ctx.session.get(Shop, ctx.shop_id)
+    message = _follow_up_message(
+        shop.name if shop else ctx.shop_id, supplier.contact_person, po, late_by, missing
+    )
+    api: MockMessagingAPI = ctx.clients["messaging_api"]
+    sent = await api.send(args.channel, supplier.phone, message)
+    notification = Notification(
+        shop_id=ctx.shop_id,
+        customer_id=None,
+        supplier_id=supplier.id,
+        channel=args.channel,
+        recipient=supplier.phone,
+        purpose="supplier_follow_up",
+        message=message,
+        status="sent",
+        external_id=sent["message_id"],
+        created_at=ctx.now,
+        sent_at=ctx.now,
+        created_by=ctx.actor,
+        idempotency_key=args.idempotency_key,
+    )
+    ctx.session.add(notification)
+    await ctx.session.flush()
+    audit(
+        ctx,
+        "follow_up_supplier",
+        "purchase_order",
+        po.id,
+        {
+            "issue": args.issue,
+            "supplier_id": supplier.id,
+            "days_late": late_by,
+            "missing": [m.model_dump() for m in missing],
+            "message_id": sent["message_id"],
+        },
+    )
+    return FollowUpSupplierOutput(
+        notification_id=notification.id,
+        purchase_order_id=po.id,
+        supplier_id=supplier.id,
+        supplier_name=supplier.name,
+        sent_to=mask_phone(supplier.phone),
+        channel=args.channel,
+        issue=args.issue,
+        days_late=late_by,
+        missing_items=missing,
+        message=message,
+        escalate_to_owner=escalate,
+        next_step=next_step,
+    )
+
+
 # ---------------------------------------------------------------------- cases
 
 
@@ -748,6 +971,16 @@ BUSINESS_TOOLS = [
         process_return,
         ProcessReturnInput,
         ProcessReturnOutput,
+    ),
+    _action(
+        "follow_up_supplier",
+        "Message the supplier about a late or short purchase order (POL-SUPPLIER-001, "
+        "SOP-SHORT-001), and say whether the owner must now be told. Needs staff "
+        "confirmation; refuses when the order is not late or not short, or when the "
+        "supplier was already messaged about it today.",
+        follow_up_supplier,
+        FollowUpSupplierInput,
+        FollowUpSupplierOutput,
     ),
     _action(
         "create_case",

@@ -1,4 +1,4 @@
-"""Prompt for the action agent."""
+"""Prompt for the action agent (Phase 5: it runs actions a person has approved)."""
 
 from app.prompts.base import PromptSpec
 

@@ -2,7 +2,7 @@
 
 A multi-agent AI assistant that helps local shopkeepers keep their records organised and detailed.
 
-> **Status:** Phases 0–3 are done: the API foundations, 24 database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, and knowledge search (RAG) with citations. The code is async throughout, and the AI models can be reached directly through OpenAI or through a gateway such as [OmniRoute](docs/omniroute.md). The agents (Phase 4) come next. See [Roadmap](#roadmap).
+> **Status:** Phases 0–4 are done: the API foundations, database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, knowledge search (RAG) with citations, and the multi-agent assistant behind `POST /api/chat` (LangGraph, with checkpoints, conversation memory and a 10-case evaluation). The models can be reached through OpenAI, OpenRouter or a gateway such as [OmniRoute](docs/omniroute.md). Approvals and guardrails (Phase 5) come next. See [Roadmap](#roadmap).
 >
 > **New here? Read [docs/how-it-works.md](docs/how-it-works.md) first.**
 
@@ -45,7 +45,7 @@ flowchart TD
 | --- | --- |
 | Frontend | Next.js 16 (App Router), TypeScript, Tailwind CSS 4 |
 | Backend | Python 3.12, FastAPI, Pydantic v2, structlog |
-| Agents | LangGraph + LangChain (Phase 4), OpenAI API or any OpenAI-compatible gateway such as [OmniRoute](docs/omniroute.md) |
+| Agents | LangGraph (on langchain-core), OpenAI API or any OpenAI-compatible gateway such as OpenRouter or [OmniRoute](docs/omniroute.md), optional LangSmith tracing ([docs/agents.md](docs/agents.md)) |
 | Data | PostgreSQL 17 (Docker locally, or [Supabase](docs/supabase.md)), SQLAlchemy 2.1, Alembic, Redis 7, ChromaDB |
 | Quality | Pytest, Ruff, ESLint, GitHub Actions, pre-commit |
 | Deploy | Docker, Vercel (frontend), Render or Railway (backend) |
@@ -57,23 +57,23 @@ ORM_AI/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py            FastAPI app: middleware, error handlers, routers
-│   │   ├── api/               routers: /health, /knowledge/search
+│   │   ├── api/               routers: /health, /knowledge/search, /chat
 │   │   ├── config/            settings loaded from .env
 │   │   ├── core/              logging, request-ID middleware, error handling
-│   │   ├── models/            24 tables (shop.py, platform.py), engine, API schemas
+│   │   ├── models/            tables (shop.py, platform.py), engine, API schemas
 │   │   ├── seed/              synthetic data: 50-shop catalog, 91-day simulator, loader, shop profiles
 │   │   ├── tools/             21 typed tools, registry, mock external APIs
-│   │   ├── services/          health checks, Redis, LLM gateway client and checks, memory
-│   │   ├── agents/            8 agents (placeholders until Phases 4–5)
-│   │   ├── graph/             LangGraph state, nodes, edges, workflow
+│   │   ├── services/          model client, chat service, conversation memory, health, Redis
+│   │   ├── agents/            triage, supervisor, data, knowledge, investigation, response, validator
+│   │   ├── graph/             LangGraph state, nodes, edges, workflow, checkpointer
 │   │   ├── rag/               knowledge search: loaders, chunking, embeddings, ChromaDB, retriever
 │   │   └── prompts/           one prompt per agent, fixed structure
 │   ├── migrations/            Alembic migrations (schema history)
 │   ├── tests/                 pytest suite
-│   ├── scripts/               seed.py, ingest.py, eval_retrieval.py, check_llm.py, generate_shop_profiles.py
+│   ├── scripts/               seed, ingest, eval_retrieval, eval_agent, check_llm, draw_graph, ...
 │   ├── data/seed/             EDGE_CASES.md and a CSV export of every table
 │   ├── knowledge_base/        78 documents: policies, procedures, supplier terms, FAQs, 50 shop profiles
-│   ├── evaluation/            test sets (retrieval now, agents in Phase 8) and reports
+│   ├── evaluation/            test sets (retrieval, 10 agent cases; 40 in Phase 8) and reports
 │   ├── Dockerfile
 │   ├── requirements.txt / requirements-dev.txt
 │   └── pyproject.toml         Ruff and pytest settings
@@ -83,7 +83,7 @@ ORM_AI/
 │       ├── components/        SiteHeader, BackendStatus, ComingSoon
 │       ├── lib/api.ts         backend client (uses NEXT_PUBLIC_API_URL)
 │       └── types/api.ts       response types
-├── docs/                      how it works, database, tools, RAG, Supabase, OmniRoute guides
+├── docs/                      how it works, agents, database, tools, RAG, Supabase, OmniRoute
 ├── docker/postgres/init/      creates the test database on first start
 ├── .github/workflows/ci.yml   lint, tests and build on every push
 ├── docker-compose.yml         Postgres, Redis, the backend (and optional Adminer and OmniRoute)
@@ -123,7 +123,7 @@ cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-alembic upgrade head          # creates the 24 tables
+alembic upgrade head          # creates the tables
 python -m scripts.seed        # loads the 50 synthetic shops
 python -m scripts.ingest      # embeds the knowledge base (needs an AI key or gateway in .env)
 uvicorn app.main:app --reload
@@ -134,7 +134,8 @@ No OpenAI key yet? `python -m scripts.ingest --embedding-model hash` and `EMBEDD
 To look inside the database in your browser: `docker compose --profile tools up -d adminer`, then open <http://localhost:8080> ([docs/database.md](docs/database.md#look-inside-the-database) has the login details and other tools).
 
 - Health check: <http://localhost:8000/api/health> should return `"status": "ok"`.
-- API docs: <http://localhost:8000/docs> (try `GET /api/knowledge/search` there)
+- API docs: <http://localhost:8000/docs> (try `GET /api/knowledge/search` and `POST /api/chat` there)
+- The agents need a chat model: see [docs/agents.md](docs/agents.md#7-choosing-the-model-openai-omniroute-or-openrouter) for the `.env` lines (OpenAI, OmniRoute or OpenRouter), then `python -m scripts.check_llm`.
 
 If PowerShell blocks `Activate.ps1`, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 
@@ -162,7 +163,7 @@ docker compose exec backend python -m scripts.seed
 
 ```powershell
 cd backend
-pytest                 # 391 tests, no API key needed (+1 PostgreSQL test when TEST_DATABASE_URL is set)
+pytest                 # about 480 tests, no API key needed (+2 PostgreSQL tests when TEST_DATABASE_URL is set)
 ruff check .
 ruff format --check .
 
@@ -193,6 +194,8 @@ Optional: `pre-commit install` (with the backend's `.venv` active) runs Ruff and
 | --- | --- | --- |
 | GET | `/api/health` | 200 when PostgreSQL and Redis answer, 503 with details when one is down |
 | GET | `/api/knowledge/search?q=…` | Search the shop's documents; returns passages with citations ([docs/rag.md](docs/rag.md)) |
+| POST | `/api/chat` | Ask the agents about one shop; returns the answer, sources, proposed actions, tool calls and agent steps ([docs/agents.md](docs/agents.md)) |
+| GET | `/api/chat/graph` | The agent graph as a Mermaid diagram |
 
 Every response carries an `X-Request-ID` header, and every error uses one shape:
 
@@ -208,7 +211,7 @@ Every response carries an `X-Request-ID` header, and every error uses one shape:
 | **1 Data + docs** | 2 | Database tables, Alembic, synthetic shop data, knowledge-base documents ✅ |
 | **2 Tools** | 3 | Typed read and action tools with mock APIs and failure injection ✅ |
 | **3 RAG** | 4–5 | Chunking, embeddings, ChromaDB, hybrid retriever, reranker, citations ✅ |
-| 4 Agent graph | 6–7 | LangGraph state graph, 8 agents, Postgres checkpointer, `/api/chat` |
+| **4 Agent graph** | 6–7 | LangGraph state graph, the agents, database checkpointer, memory, `/api/chat` ✅ |
 | 5 Approval + guardrails | 8 | Policy gate, `interrupt()` approval, validator, input guardrails |
 | 6 API | 9 | All endpoints, SSE progress stream, rate limits, uploads |
 | 7 Frontend | 10 | Chat, workflow, sources, approval and admin pages |

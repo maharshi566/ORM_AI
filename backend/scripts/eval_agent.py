@@ -1,0 +1,145 @@
+"""Run the 10 normal cases through the agents with your real model (the Phase 4 gate).
+
+Usage (from backend/, with PostgreSQL seeded and the knowledge base ingested):
+
+    python -m scripts.eval_agent              # all 10 cases
+    python -m scripts.eval_agent --case A04   # one case, printing the full answer
+
+Needs LLM_MODEL_FAST / LLM_MODEL_SMART and a key or gateway in .env (check with
+python -m scripts.check_llm first). Each case makes about 4-6 model calls, so the
+whole run costs a few cents on a small model and takes one to three minutes.
+
+Nothing is changed in the shop's records: the agents only read, and proposed actions
+are never run. Prints one line per case and writes a Markdown report to
+evaluation/reports/. Exits with 0 when the gate passes, 1 when it does not, and 2 when
+something is not set up.
+"""
+
+import argparse
+import asyncio
+import re
+import sys
+import uuid
+
+from langgraph.checkpoint.memory import InMemorySaver
+
+from app.agents.evaluation import AgentCase, load_agent_cases, run_cases, to_markdown
+from app.config.paths import BACKEND_DIR, backend_path
+from app.config.settings import get_settings
+from app.core.logging import configure_logging
+from app.core.tracing import configure_tracing
+from app.graph.deps import AgentDeps
+from app.graph.workflow import RECURSION_LIMIT, compile_graph
+from app.models.database import dispose_engine, get_session_factory, init_engine
+from app.rag.embeddings import EmbeddingConfigError
+from app.rag.factory import build_retriever
+from app.services.chat_model import OpenAIChatModel, chat_model_problem
+from app.tools.api_tools import default_clients
+from app.tools.base import business_now
+from app.tools.registry import ToolRegistry
+
+DATASET = BACKEND_DIR / "evaluation" / "datasets" / "agent_cases.yaml"
+REPORTS = BACKEND_DIR / "evaluation" / "reports"
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--case", action="append", help="run only this case ID (repeatable)")
+    parser.add_argument("--min", type=float, default=0.8, help="gate for both scores (0.8)")
+    parser.add_argument("--dataset", default=str(DATASET), help="cases YAML file")
+    return parser.parse_args(argv)
+
+
+async def run(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    configure_logging("WARNING", json_logs=settings.log_json)
+    configure_tracing(settings)
+    problem = chat_model_problem(settings)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+    try:
+        retriever = await asyncio.to_thread(build_retriever, settings)
+    except EmbeddingConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+
+    cases = load_agent_cases(backend_path(args.dataset))
+    if args.case:
+        wanted = {c.upper() for c in args.case}
+        cases = [c for c in cases if c.id in wanted]
+        if not cases:
+            print(f"No case with ID {', '.join(sorted(wanted))}.", file=sys.stderr)
+            return 2
+
+    init_engine(settings.database_url, transaction_pooler=settings.db_transaction_pooler)
+    llm = OpenAIChatModel(settings)
+    deps = AgentDeps(
+        settings=settings,
+        llm=llm,
+        registry=ToolRegistry(retry_backoff_seconds=settings.tool_retry_backoff_seconds),
+        session_factory=get_session_factory(),
+        now=business_now(settings.business_date),
+        knowledge=retriever,
+        clients=default_clients(settings),
+        record_to_db=False,  # an evaluation leaves no workflow rows behind
+    )
+    graph = compile_graph(InMemorySaver())
+
+    async def run_one(case: AgentCase) -> dict:
+        workflow_id = f"eval-{uuid.uuid4()}"
+        state = {
+            "workflow_id": workflow_id,
+            "session_id": "evaluation",
+            "user_id": None,
+            "shop_id": case.shop_id,
+            "user_query": case.message,
+            "conversation_history": [],
+        }
+        config = {"configurable": {"thread_id": workflow_id}, "recursion_limit": RECURSION_LIMIT}
+        print(f"{case.id} {case.message[:70]} ...", flush=True)
+        return await graph.ainvoke(state, config=config, context=deps)
+
+    models = f"fast={llm.model_for('fast')}, smart={llm.model_for('smart')}"
+    print(f"Running {len(cases)} case(s) with {models} at {llm.endpoint.where}\n")
+    try:
+        report = await run_cases(cases, run_one)
+    finally:
+        await dispose_engine()
+    report.models = models
+
+    print()
+    for o in report.outcomes:
+        marks = [
+            "intent " + ("ok" if o.intent_ok else f"MISS ({o.intent})"),
+            "records " + ("ok" if o.records_ok else f"MISS ({', '.join(o.missing_records)})"),
+            "cited " + ("ok" if o.documents_ok else "MISS"),
+            f"validator {o.validation}",
+            f"{o.latency_ms / 1000:.1f}s",
+            f"{o.input_tokens + o.output_tokens} tokens",
+        ]
+        print(f"{o.case.id}: " + ", ".join(marks))
+        for error in o.errors[:2]:
+            print(f"    error: {error}")
+        if args.case:
+            print(f"\n{o.answer}\n")
+    print(
+        f"\nIntent accuracy {report.intent_accuracy:.2f}, grounded and cited "
+        f"{report.grounded_and_cited_rate:.2f} (gate {args.min}): "
+        + ("PASS" if report.passed(args.min) else "FAIL")
+    )
+
+    slug = re.sub(r"[^A-Za-z0-9.-]+", "-", llm.model_for("smart")).strip("-")
+    path = REPORTS / f"agent-{slug}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(to_markdown(report, minimum=args.min), encoding="utf-8", newline="\n")
+    print(f"Report: {path.relative_to(BACKEND_DIR) if path.is_relative_to(BACKEND_DIR) else path}")
+    return 0 if report.passed(args.min) else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    return asyncio.run(run(parse_args(argv)))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

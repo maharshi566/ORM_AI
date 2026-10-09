@@ -9,7 +9,18 @@ evaluation report (Phase 8).
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.database import Base
@@ -211,3 +222,54 @@ class Evaluation(Base):
     latency_ms: Mapped[float | None] = mapped_column(Float)
     details: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
     created_at: Mapped[datetime] = _now_column()
+
+
+# --- LangGraph checkpoints (Phase 4) -----------------------------------------
+# The agent graph saves its state after every step, so a workflow can pause (for
+# example for an approval, Phase 5) and resume later, even after a restart. The
+# layout mirrors LangGraph's own savers: the checkpoint itself, the channel values it
+# points to (stored once per version), and the pending writes of unfinished steps.
+# Values are serialised by LangGraph; these tables only store the bytes.
+
+
+class GraphCheckpoint(Base):
+    __tablename__ = "graph_checkpoints"
+
+    thread_id: Mapped[str] = mapped_column(String(64), primary_key=True)  # the workflow ID
+    checkpoint_ns: Mapped[str] = mapped_column(String(255), primary_key=True)
+    checkpoint_id: Mapped[str] = mapped_column(String(64), primary_key=True)  # time-ordered
+    parent_checkpoint_id: Mapped[str | None] = mapped_column(String(64))
+    checkpoint_type: Mapped[str] = mapped_column(String(32))
+    checkpoint: Mapped[bytes] = mapped_column(LargeBinary)
+    metadata_type: Mapped[str] = mapped_column(String(32))
+    metadata_value: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = _now_column()
+
+
+class GraphCheckpointBlob(Base):
+    __tablename__ = "graph_checkpoint_blobs"
+
+    thread_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    checkpoint_ns: Mapped[str] = mapped_column(String(255), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(255), primary_key=True)
+    version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value_type: Mapped[str] = mapped_column(String(32))
+    value: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class GraphCheckpointWrite(Base):
+    __tablename__ = "graph_checkpoint_writes"
+    __table_args__ = (
+        UniqueConstraint("thread_id", "checkpoint_ns", "checkpoint_id", "task_id", "idx"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # order
+    thread_id: Mapped[str] = mapped_column(String(64), index=True)
+    checkpoint_ns: Mapped[str] = mapped_column(String(255))
+    checkpoint_id: Mapped[str] = mapped_column(String(64))
+    task_id: Mapped[str] = mapped_column(String(64))
+    idx: Mapped[int] = mapped_column(Integer)
+    channel: Mapped[str] = mapped_column(String(255))
+    value_type: Mapped[str] = mapped_column(String(32))
+    value: Mapped[bytes] = mapped_column(LargeBinary)
+    task_path: Mapped[str] = mapped_column(String(255), default="")

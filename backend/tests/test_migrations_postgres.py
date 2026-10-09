@@ -15,6 +15,8 @@ from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from app.models import Base
+
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -60,7 +62,8 @@ def test_upgrade_check_and_downgrade() -> None:
 
     command.downgrade(config, "base")
     command.upgrade(config, "head")
-    assert asyncio.run(_table_count(TEST_DATABASE_URL)) == 25  # 24 tables + alembic_version
+    # every model's table, plus alembic_version
+    assert asyncio.run(_table_count(TEST_DATABASE_URL)) == len(Base.metadata.tables) + 1
     command.check(config)  # raises if the models and the migrations disagree
     assert asyncio.run(_tables_without_rls(TEST_DATABASE_URL)) == []
 

@@ -5,40 +5,19 @@ the same search the Knowledge agent's ``search_knowledge`` tool runs, without an
 agent or an LLM answer: you see exactly which passages and citations come back.
 """
 
-import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request
 
 from app.config.settings import Settings
 from app.core.exceptions import DependencyUnavailableError
-from app.rag.embeddings import EmbeddingConfigError
-from app.rag.factory import build_retriever
-from app.rag.retriever import KnowledgeBaseEmptyError, KnowledgeRetriever
+from app.rag.retriever import KnowledgeBaseEmptyError
 from app.rag.vector_store import SearchFilters, VectorStoreError
+from app.services.knowledge_service import shared_retriever
 from app.tools.base import business_now
 from app.tools.knowledge_tools import Category, SearchKnowledgeOutput, search_output
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
-
-
-async def _retriever(request: Request) -> KnowledgeRetriever:
-    """Built on first use and kept on the app, so ChromaDB is opened once.
-
-    Opening ChromaDB reads files, so it runs in a worker thread. The lock makes
-    several simultaneous first requests share one retriever instead of each building
-    their own.
-    """
-    state = request.app.state
-    if getattr(state, "knowledge_retriever", None) is None:
-        async with state.knowledge_lock:
-            if getattr(state, "knowledge_retriever", None) is None:
-                settings: Settings = state.settings
-                try:
-                    state.knowledge_retriever = await asyncio.to_thread(build_retriever, settings)
-                except EmbeddingConfigError as exc:
-                    raise DependencyUnavailableError(str(exc)) from exc
-    return state.knowledge_retriever
 
 
 @router.get(
@@ -66,7 +45,7 @@ async def search(
         include_untrusted=include_untrusted,
     )
     try:
-        retriever = await _retriever(request)
+        retriever = await shared_retriever(request.app)
         result = await retriever.search(q, k=k, filters=filters)
     except (KnowledgeBaseEmptyError, VectorStoreError) as exc:
         raise DependencyUnavailableError(str(exc)) from exc

@@ -16,6 +16,23 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      # A real PostgreSQL for the migration and checkpointer tests (the rest use SQLite).
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: orm_ai
+          POSTGRES_PASSWORD: orm_ai
+          POSTGRES_DB: orm_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orm_ai -d orm_ai_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://orm_ai:orm_ai@localhost:5432/orm_ai_test
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -27,6 +44,7 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest
+      - run: python -m scripts.draw_graph --check
 
   frontend:
     name: Frontend (lint + types + build)
