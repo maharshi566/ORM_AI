@@ -375,6 +375,16 @@ def test_gemini_is_named_and_its_key_hinted() -> None:
     assert not resolve_endpoint(settings(llm_base_url="http://localhost:20128/v1")).is_gemini
 
 
+def test_an_openai_key_is_never_sent_to_google() -> None:
+    """LLM_API_KEY not pasted yet: no key at all, rather than the OpenAI one."""
+    endpoint = resolve_endpoint(settings(llm_base_url=GEMINI_URL, openai_api_key=LONG_KEY))
+    no_key = _gemini_error(openai.AuthenticationError, 401, {"message": "missing key"})
+
+    assert endpoint.api_key != LONG_KEY and not endpoint.has_key
+    assert "No key is set" in explain_error(no_key, endpoint, doing="chat").message
+    assert "LLM_API_KEY" in explain_error(no_key, endpoint, doing="chat").message
+
+
 def test_a_bad_gemini_key_is_called_a_bad_key_even_though_google_says_400() -> None:
     """Google answers a bad key with HTTP 400 and a list-shaped body."""
     bad_key = _gemini_error(

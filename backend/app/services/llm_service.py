@@ -172,6 +172,11 @@ def resolve_endpoint(settings: Settings, purpose: Purpose = "chat") -> LLMEndpoi
         url = _clean_base_url(settings.llm_base_url, "LLM_BASE_URL")
         key, source = _first_key((llm_key, openai_key))
 
+    if url is not None and urlsplit(url).hostname == GEMINI_HOST and source == "OPENAI_API_KEY":
+        # An OpenAI key is never valid at Google, so it is not sent there: with
+        # LLM_API_KEY still empty, the first call says "no key is set" instead.
+        key, source = "", ""
+
     from_env = _from_environment(source)
     if url is None:
         return LLMEndpoint(purpose, None, key, source, from_env) if key else None
