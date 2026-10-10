@@ -186,6 +186,26 @@ def reject_all(request: dict[str, Any], *, decided_by: str, note: str) -> dict[s
     }
 
 
+def record_ids(arguments: dict[str, Any]) -> dict[str, Any]:
+    """The records an action is about: every *_id argument, and the products ordered."""
+    ids: dict[str, Any] = {
+        k: v for k, v in arguments.items() if k.endswith("_id") and k != "idempotency_key"
+    }
+    if isinstance(arguments.get("lines"), list):
+        ids["lines"] = sorted(
+            str(line.get("product_id")) for line in arguments["lines"] if isinstance(line, dict)
+        )
+    return ids
+
+
+def changed_records(original: dict[str, Any], changed: dict[str, Any]) -> list[str]:
+    """Which record IDs a "modify" would switch. A change may adjust amounts, quantities,
+    dates or wording, never which customer, bill, product or order the action is about:
+    that would be a new action the policy gate never saw."""
+    before, after = record_ids(original), record_ids(changed)
+    return sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+
+
 def apply_decision(
     actions: list[dict[str, Any]], decision: dict[str, Any], deps: AgentDeps
 ) -> list[dict[str, Any]]:
@@ -212,6 +232,14 @@ def apply_decision(
         if verdict == "modify":
             spec = deps.registry.spec(action["tool"])
             changed = {**(choice.get("arguments") or {})}
+            switched = changed_records(action["arguments"], changed)
+            if switched:
+                action["status"] = "rejected"
+                action["result"] = (
+                    f"A change may not switch the record ({', '.join(switched)}); "
+                    "ask again for the other record."
+                )
+                continue
             key = action["arguments"].get("idempotency_key")
             if key:
                 changed["idempotency_key"] = f"{key}:m"[:80]
@@ -226,6 +254,29 @@ def apply_decision(
         action["status"] = "modified" if verdict == "modify" else "approved"
         action["approved_by"], action["approver_role"] = decided_by, role
     return actions
+
+
+async def _recheck_modified(
+    actions: list[dict[str, Any]], state: dict[str, Any], deps: AgentDeps
+) -> None:
+    """Changed details go through the policy gate again: a bigger refund or order may
+    need the owner, and an approval from staff then does not cover it."""
+    modified = [a for a in actions if a["status"] == "modified"]
+    if not modified:
+        return
+    async with deps.session_factory() as session:
+        for action in modified:
+            check = await policy_gate.required_role(action, session, state, deps.now)
+            blocked = policy_gate.blocked_reason(action, state)
+            if blocked:
+                action.update(status="blocked", result=f"Not allowed: {blocked}.")
+            elif check.required_role == "owner" and action.get("approver_role") != "owner":
+                action.update(
+                    status="needs_owner",
+                    required_role="owner",
+                    result="After the change this needs the shop owner's approval "
+                    f"({'; '.join(check.reasons)}).",
+                )
 
 
 async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
@@ -279,6 +330,7 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
     decision = interrupt(request)  # pauses here; on resume, returns the person's decision
 
     actions = apply_decision(actions, decision, deps)
+    await _recheck_modified(actions, state, deps)
     runnable = [a for a in actions if a["status"] in RUNNABLE]
     counts = {
         status: sum(a["status"] == status for a in actions)

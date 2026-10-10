@@ -93,6 +93,7 @@ async def run(args: argparse.Namespace) -> int:
         knowledge=retriever,
         clients=default_clients(settings),
         record_to_db=False,  # an evaluation leaves no workflow rows behind
+        run_actions=False,  # and never acts, not even on low-risk drafts or cases
     )
     graph = compile_graph(InMemorySaver())
 

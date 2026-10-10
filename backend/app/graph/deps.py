@@ -39,6 +39,8 @@ class AgentDeps:
     # Write agent_runs and tool_calls rows. Needs the workflows row to exist (the chat
     # service creates it first); tests that run the graph alone switch it off.
     record_to_db: bool = True
+    # False: approved actions are reported but never carried out (the evaluation script).
+    run_actions: bool = True
     on_event: EventSink | None = None  # progress events (the SSE stream in Phase 6)
 
     def tool_context(

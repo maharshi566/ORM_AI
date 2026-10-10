@@ -15,7 +15,7 @@ from langgraph.types import Command
 from sqlalchemy import func, select
 
 from app.agents.human_review import approval_id
-from app.agents.policy_gate import _blocked_reason
+from app.agents.policy_gate import blocked_reason
 from app.graph.checkpointer import SQLCheckpointSaver
 from app.graph.nodes import BLOCKED_REPLY
 from app.graph.workflow import RECURSION_LIMIT, compile_graph
@@ -209,8 +209,8 @@ def test_an_action_resting_only_on_a_flyer_may_never_run() -> None:
     proposed = {"tool": "create_purchase_order", "arguments": {}, "reason": f"As {flyer} says."}
     sound = {**proposed, "reason": "Below reorder level [POL-REORDER-001 v1 §1. When]."}
 
-    assert "outside document" in _blocked_reason(proposed, state)
-    assert _blocked_reason(sound, state) is None
+    assert "outside document" in blocked_reason(proposed, state)
+    assert blocked_reason(sound, state) is None
 
 
 # ------------------------------------------------------------------ restart and records
@@ -346,3 +346,118 @@ def test_tool_results_are_told_in_plain_words() -> None:
     assert price.startswith("PRD-0085 price changed from Rs 340 to Rs 355")
     assert "below the 8.0% minimum" in price
     assert "already done earlier" in again
+
+
+# ------------------------------------------------------------------ review fixes
+
+
+async def test_a_change_may_not_switch_to_another_record(make_deps, run_agent) -> None:
+    state = await run_agent(
+        make_deps(),
+        "Please process the return of SALE-005598.",
+        decision="modify",
+        role="staff",
+        arguments={"sale_id": "SALE-005597", "reason": "Customer returned the goods."},
+    )
+
+    switched = action(state)
+    assert switched["status"] == "rejected" and "may not switch" in switched["result"]
+    assert "action" not in path(state)
+
+
+async def test_a_change_that_needs_the_owner_is_not_covered_by_staff(make_deps, run_agent) -> None:
+    """Staff approves a small stock adjustment, changed to one worth Rs 1,900 at cost."""
+    state = await run_agent(
+        make_deps(),
+        "I counted PRD-0002 and found 6 fewer than the system. Please record the adjustment.",
+        decision="modify",
+        role="staff",
+        user="USR-002",
+        arguments={
+            "product_id": "PRD-0002",
+            "quantity_change": -20,
+            "movement_type": "adjustment",
+            "reason": "Physical count was lower than the system.",
+        },
+    )
+
+    changed = action(state)
+    assert changed["status"] == "needs_owner" and "owner" in changed["result"]
+    assert "action" not in path(state)
+
+
+async def test_the_same_action_proposed_twice_is_kept_once(make_deps, run_agent) -> None:
+    from app.agents.investigation import check_actions
+    from app.agents.schemas import InvestigationResult
+
+    proposal = {
+        "tool": "record_stock_adjustment",
+        "arguments_json": '{"product_id": "PRD-0002", "quantity_change": -6, '
+        '"reason": "Physical count was lower than the system."}',
+        "reason": "Counted stock is lower.",
+    }
+    result = InvestigationResult(
+        issue_type="count",
+        summary="s",
+        findings=[],
+        evidence=[],
+        policy_references=[],
+        recommended_action="r",
+        proposed_actions=[proposal, proposal],
+        confidence=0.9,
+        requires_human_review=True,
+        needs_more_data=False,
+        data_requests=[],
+    )
+    state = {"workflow_id": "wf-dup", "user_query": "PRD-0002", "retrieved_data": {}}
+
+    actions, warnings = check_actions(result, state, make_deps())
+
+    assert len(actions) == 1 and any("duplicate" in w for w in warnings)
+
+
+async def test_a_blocked_reply_still_reports_what_already_ran(make_deps, run_agent) -> None:
+    from app.graph.nodes import blocked_reply
+
+    state = {
+        "proposed_actions": [
+            {
+                "tool": "follow_up_supplier",
+                "arguments": {"purchase_order_id": "PO-00585"},
+                "reason": "late",
+                "status": "done",
+                "result": "Message sent to Deccan Hardware Distributors on whatsapp.",
+            }
+        ]
+    }
+
+    reply = blocked_reply(state)
+
+    assert "nothing was changed" not in reply
+    assert "Message sent to Deccan Hardware Distributors" in reply
+    assert blocked_reply({"proposed_actions": []}) == BLOCKED_REPLY
+
+
+async def test_invisible_characters_do_not_hide_a_request_for_an_exception(
+    make_deps, run_agent
+) -> None:
+    state = await run_agent(
+        make_deps(), "Please process the return of SALE-005598, just this on​ce."
+    )
+
+    request = approval_request(state)
+    assert any("exception" in t for t in request["triggers"])
+    assert "​" not in state["user_query"]
+
+
+async def test_an_evaluation_run_never_acts(make_deps, run_agent, session_factory) -> None:
+    deps = make_deps()
+    deps.run_actions = False
+
+    state = await run_agent(
+        deps, LATE_PO, shop_id="SHOP-002", decision="approve", user="USR-004", role="staff"
+    )
+
+    assert action(state)["status"] == "approved"
+    assert "evaluation run" in action(state)["result"]
+    assert await notifications(session_factory, "supplier_follow_up") == 0

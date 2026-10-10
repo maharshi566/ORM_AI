@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from app.agents.common import citations_in, ids_in, record_key
 from app.agents.investigation import check_actions, check_result
 from app.agents.retrieval import fallback_calls
@@ -223,6 +225,37 @@ def test_the_validator_catches_each_kind_of_problem() -> None:
     assert "CUST-0002" in unknown_id[0]
     assert "no action tool confirmed" in claimed[0]
     assert "empty" in empty[0]
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "I have successfully sent the reminder to CUST-0001",
+        "I\u2019ve also placed the order for CUST-0001",
+        "I've gone ahead and sent the reminder to CUST-0001",
+        "I have approved the extra credit for CUST-0001",
+    ],
+)
+def test_claims_in_other_words_are_caught(claim: str) -> None:
+    state = {**STATE, "intent": "customer_credit"}
+
+    assert any("no action tool" in p for p in find_problems(draft(f"{claim} {CREDIT}."), state))
+
+
+def test_passive_facts_about_the_records_are_not_claims() -> None:
+    state = {
+        **STATE,
+        "intent": "customer_credit",
+        "proposed_actions": [{"tool": "send_payment_reminder"}],
+    }
+    facts = (
+        f"CUST-0001 has been placed on hold before. A reminder has been sent three times "
+        f"already {CREDIT}."
+    )
+    claim = f"The reminder has been sent to CUST-0001 {CREDIT}."
+
+    assert find_problems(draft(facts), state) == []
+    assert find_problems(draft(claim), state)
 
 
 def test_record_facts_in_the_past_tense_are_not_claims() -> None:

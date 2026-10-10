@@ -36,7 +36,7 @@ from typing import Any, Literal
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.guardrails import injection_sentences
+from app.agents.guardrails import clean_text, injection_sentences
 from app.models import Product, Sale, StockMovement
 from app.tools.business_tools import (
     ADJUSTMENT_OWNER_THRESHOLD,
@@ -49,7 +49,7 @@ Role = Literal["staff", "owner"]
 APPROVAL_CONFIDENCE = 0.7
 REPEAT_CLAIM_DAYS = 30
 REPEAT_CLAIM_LIMIT = 2  # returns in the window that make a customer a repeat claimant
-LOW_RISK_TOOLS = frozenset({"create_case"})  # plus purchase-order drafts, see _required_role
+LOW_RISK_TOOLS = frozenset({"create_case"})  # plus purchase-order drafts, see required_role
 EXCEPTION_WORDS = (
     "exception",
     "waive",
@@ -122,7 +122,7 @@ async def _recent_returns(session: AsyncSession, shop_id: str, customer_id: str,
     return int(await session.scalar(returned) or 0)
 
 
-async def _required_role(
+async def required_role(
     action: dict[str, Any], session: AsyncSession, state: dict[str, Any], now: Any
 ) -> ActionCheck:
     tool, args, shop_id = action["tool"], action["arguments"], state["shop_id"]
@@ -200,7 +200,7 @@ async def _required_role(
     return check
 
 
-def _blocked_reason(action: dict[str, Any], state: dict[str, Any]) -> str | None:
+def blocked_reason(action: dict[str, Any], state: dict[str, Any]) -> str | None:
     """An action justified only by an outside document may never run (POL-AI-001 §3)."""
     passages = state.get("retrieved_documents") or []
     untrusted = {p["citation"] for p in passages if p.get("trust") == "untrusted"}
@@ -229,7 +229,7 @@ def request_triggers(state: dict[str, Any]) -> list[str]:
     flags = state.get("input_flags") or []
     if flags:
         triggers.append("the message tried to change ORM_AI's rules")
-    query = (state.get("user_query") or "").lower()
+    query = clean_text(state.get("user_query") or "").lower()
     if any(word in query for word in EXCEPTION_WORDS):
         triggers.append("the request asks for an exception to a shop rule")
     return triggers
@@ -240,8 +240,8 @@ async def assess(
 ) -> GateResult:
     checks: dict[str, ActionCheck] = {}
     for action in actions:
-        check = await _required_role(action, session, state, now)
-        check.blocked = _blocked_reason(action, state)
+        check = await required_role(action, session, state, now)
+        check.blocked = blocked_reason(action, state)
         checks[action["action_id"]] = check
     triggers = request_triggers(state)
     # A repeat claimant is a doubt about the request too: everything waits for the owner.

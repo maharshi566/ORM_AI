@@ -60,15 +60,29 @@ POLICY_INTENTS = frozenset(
         "policy_question",
     }
 )
-# First-person claims of having acted ("I have sent", "I've placed", "we recorded") and
-# present-perfect passive ones ("the order has been placed"). "A reminder was sent on
-# 28 Sep" is a fact from the records, not a claim, so plain past passive is not matched.
-DONE_CLAIM = re.compile(
-    r"\b(?:i|we|orm_ai)(?:\s+have|'ve)?\s+(?:just\s+|already\s+|now\s+)?(?P<verb>[a-z]+)\b"
-    r"|\b(?:has|have) been\s+(?:successfully\s+|now\s+)?(?P<passive>[a-z]+)\b",
+# First-person claims of having acted: "I have sent", "I've placed", "we recorded",
+# "I've also gone ahead and sent". Curly apostrophes are straightened first.
+FIRST_PERSON_CLAIM = re.compile(
+    r"\b(?:i|we|orm_ai)(?:\s+have|'ve|\s+had)?"
+    r"(?:\s+(?:just|already|now|also|successfully|today|gone ahead and|went ahead and))*"
+    r"\s+(?P<verb>[a-z]+)\b",
     re.IGNORECASE,
 )
-# Which action tools' success makes each verb true.
+# Present-perfect passive claims: "the reminder has been sent". The records are full of
+# such facts ("PO-00585 has been placed with the supplier on 2 Oct"), so a passive claim
+# counts only when this workflow proposed that kind of action and no tool confirmed it.
+PASSIVE_CLAIM = re.compile(
+    r"\b(?:has|have) been\s+(?:successfully\s+|now\s+|just\s+)?(?P<verb>[a-z]+)\b",
+    re.IGNORECASE,
+)
+# Words that date a passive sentence, which makes it a fact from the records.
+PAST_EVENT = re.compile(
+    r"\b(?:already|times|ago|earlier|previously|before|last|yesterday|since|"
+    r"on \d|\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))",
+    re.IGNORECASE,
+)
+# Which action tools' success makes each verb true. An empty set: nothing ORM_AI can do
+# makes it true (ORM_AI never approves, waives, deletes or clears balances itself).
 CLAIM_TOOLS: dict[str, frozenset[str]] = {
     verb: frozenset(tools)
     for verbs, tools in (
@@ -85,7 +99,23 @@ CLAIM_TOOLS: dict[str, frozenset[str]] = {
         ),
         (("created", "opened", "logged"), {"create_case", "create_purchase_order"}),
         (("resolved", "closed"), {"resolve_case"}),
-        (("cancelled", "deleted", "removed", "written"), set()),
+        (
+            (
+                "cancelled",
+                "deleted",
+                "removed",
+                "written",
+                "approved",
+                "waived",
+                "cleared",
+                "marked",
+                "credited",
+                "merged",
+                "authorised",
+                "authorized",
+            ),
+            set(),
+        ),
     )
     for verb in verbs
 }
@@ -111,16 +141,27 @@ def draft_text(draft: dict[str, Any], *, include_pending: bool = True) -> str:
 
 def unsupported_claims(text: str, state: dict[str, Any]) -> list[str]:
     """Verbs the reply uses to claim an action, with no matching tool success."""
+    text = (text or "").replace("\u2019", "'")
     succeeded = {
         r["tool"]
         for r in state.get("tool_results") or []
         if r.get("agent") == "action" and r["status"] == "success"
     }
+    proposed = {a["tool"] for a in state.get("proposed_actions") or []}
     claims = []
-    for match in DONE_CLAIM.finditer(text):
-        verb = (match.group("verb") or match.group("passive") or "").lower()
+    for match in FIRST_PERSON_CLAIM.finditer(text):
+        verb = match.group("verb").lower()
         tools = CLAIM_TOOLS.get(verb)
         if tools is not None and not (tools & succeeded):
+            claims.append(verb)
+    for match in PASSIVE_CLAIM.finditer(text):
+        verb = match.group("verb").lower()
+        tools = CLAIM_TOOLS.get(verb)
+        start = max(text.rfind(".", 0, match.start()), text.rfind("\n", 0, match.start())) + 1
+        ends = [i for i in (text.find(".", match.end()), text.find("\n", match.end())) if i != -1]
+        if PAST_EVENT.search(text[start : min(ends) if ends else len(text)]):
+            continue  # "has been sent three times already": a fact from the records
+        if tools and (tools & proposed) and not (tools & succeeded):
             claims.append(verb)
     return list(dict.fromkeys(claims))
 

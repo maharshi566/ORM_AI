@@ -196,7 +196,10 @@ async def finish(
 ) -> ChatResponse:
     response = build_response(final, workflow_id, session_id)
     await close_workflow(rt, workflow_id, response)
-    await rt.memory.append(session_id, "assistant", response.answer, workflow_id=workflow_id)
+    try:
+        await rt.memory.append(session_id, "assistant", response.answer, workflow_id=workflow_id)
+    except Exception as exc:  # the reply exists; memory is a convenience
+        logger.warning("memory_append_failed", workflow_id=workflow_id, error=repr(exc))
     return response
 
 

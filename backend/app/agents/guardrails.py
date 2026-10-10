@@ -19,6 +19,7 @@ always wrapped as untrusted data.
 """
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 MAX_MESSAGE_CHARS = 2000
@@ -73,7 +74,20 @@ FLAG_REASONS = {
     "mass_change": "asks to change many records at once",
 }
 
-CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f​-‏‪-‮⁦-⁩]")
+
+def clean_text(text: str) -> str:
+    """NFKC-normalised, without control characters or invisible format characters.
+
+    Soft hyphens, zero-width spaces, word joiners, byte-order marks and direction
+    overrides (Unicode category Cf) are removed, so "ig\u00adnore your rules" reads as
+    "ignore your rules" both for the checks and for the models.
+    """
+    text = unicodedata.normalize("NFKC", text or "")
+    return "".join(
+        ch
+        for ch in text
+        if ch in "\n\t" or unicodedata.category(ch) not in {"Cc", "Cf", "Cs", "Co"}
+    )
 
 
 @dataclass(frozen=True)
@@ -95,7 +109,7 @@ def injection_flags(text: str) -> list[str]:
 
 
 def check_input(text: str, *, max_chars: int = MAX_MESSAGE_CHARS) -> InputCheck:
-    cleaned = CONTROL_CHARS.sub("", text or "").strip()
+    cleaned = clean_text(text).strip()
     truncated = len(cleaned) > max_chars
     if truncated:
         cleaned = cleaned[:max_chars]
@@ -105,27 +119,39 @@ def check_input(text: str, *, max_chars: int = MAX_MESSAGE_CHARS) -> InputCheck:
 # ------------------------------------------------------------ untrusted documents
 
 SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
-# Words that show a sentence refuses an instruction instead of following it. Reporting
-# verbs ("the flyer says") are not enough: "as the notice says, I marked all balances as
-# paid" is compliance. A report usually uses the bare verb ("says to mark"), which the
-# compliance pattern below does not match anyway.
-DISTANCING = re.compile(
-    r"\b(?:not|never|won'?t|cannot|can'?t|didn'?t|refus\w*|ignor\w*|instead|rather than)\b",
+# A refusal right before the verb ("I will not mark", "never approved") turns a match
+# into a refusal. Only the few words just before the match count: "I marked all balances
+# as paid, so you do not need to chase anyone" is still compliance.
+REFUSAL_BEFORE = re.compile(
+    r"\b(?:not|never|won'?t|cannot|can'?t|didn'?t|refuse\w*|ignor\w*|instead of|rather than|"
+    r"no need to|do not|don'?t)\b(?:\s+\w+){0,3}\s*$",
     re.IGNORECASE,
 )
-# Doing what an injected instruction says, in a reply.
+# Doing what the injected instructions say, tied to what they are about (customer
+# balances, purchase orders, telling the owner), so ordinary sentences about drafts,
+# stock levels or approvals do not match.
+BALANCES = r"(?:balances?|dues|credit|udhaar|accounts?)"
+ORDERS = r"(?:orders?|purchase orders?|POs?)"
 COMPLIANCE = re.compile(
-    r"\b(?:marked|marking|cleared|clearing|set)\b[^.\n]{0,40}\b(?:paid|cleared|zero)\b"
-    r"|\b(?:approved|approving|will approve|auto-?approved?)\b[^.\n]{0,40}"
-    r"\b(?:automatically|all|every)\b"
-    r"|\b(?:skipp?ed|skipping|bypass\w*|without)\b[^.\n]{0,25}\bapprov\w*",
+    rf"\b(?:marked|marking|cleared|clearing|set|written off|wrote off|waived)\b[^.\n]{{0,50}}"
+    rf"\b{BALANCES}\b[^.\n]{{0,30}}\b(?:paid|cleared|zero|off)\b"
+    rf"|\b(?:cleared|clearing|written off|wrote off|waived)\b[^.\n]{{0,20}}\b(?:all|every)\b"
+    rf"[^.\n]{{0,30}}\b{BALANCES}\b"
+    rf"|\b(?:all|every)\b[^.\n]{{0,30}}\b{BALANCES}\b[^.\n]{{0,30}}"
+    rf"\b(?:marked|cleared|set to zero|written off|waived)\b"
+    rf"|\b(?:skipped|skipping|bypassed|bypassing)\b[^.\n]{{0,20}}\bapproval\b"
+    rf"|\b(?:approved|approving|will approve|auto-?approved?|accepted)\b[^.\n]{{0,40}}"
+    rf"\b(?:automatically|all|every)\b[^.\n]{{0,30}}\b{ORDERS}\b"
+    rf"|\b(?:all|every)\b[^.\n]{{0,25}}\b{ORDERS}\b[^.\n]{{0,40}}"
+    rf"\b(?:approved|accepted)\b[^.\n]{{0,25}}\bautomatically\b",
     re.IGNORECASE,
 )
-# Keeping something from the owner is itself said with a negation, so it is checked
-# without the refusal words.
+# Keeping something from the owner, as an intention (a fact like "I have not told the
+# owner yet; it needs their approval" is not hiding).
 HIDING = re.compile(
-    r"\b(?:won'?t|will not|didn'?t|did not|have not|haven'?t)\s+(?:tell|told|inform|notify)"
-    r"\w*\b[^.\n]{0,20}\bowner\b",
+    r"\b(?:won'?t|will not|no need to|do not need to|don'?t need to)\s+(?:tell|inform|notify)"
+    r"\w*\b[^.\n]{0,20}\bowner\b"
+    r"|\b(?:keep|kept|keeping)\b[^.\n]{0,20}\bfrom the (?:shop )?owner\b",
     re.IGNORECASE,
 )
 
@@ -145,8 +171,11 @@ def injection_sentences(passages: list[dict]) -> list[str]:
 def complies_with_injection(text: str) -> list[str]:
     """Sentences of a reply that do what an injected instruction asked."""
     hits = []
-    for sentence in SENTENCE.findall(text or ""):
-        complied = COMPLIANCE.search(sentence) and not DISTANCING.search(sentence)
+    for sentence in SENTENCE.findall(clean_text(text).replace("\u2019", "'")):
+        complied = any(
+            not REFUSAL_BEFORE.search(sentence[: match.start()])
+            for match in COMPLIANCE.finditer(sentence)
+        )
         if complied or HIDING.search(sentence):
             hits.append(sentence.strip())
     return hits

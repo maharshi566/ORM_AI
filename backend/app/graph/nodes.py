@@ -38,7 +38,7 @@ from app.agents import (
     validator,
 )
 from app.agents.common import AgentOutcome, citations_in
-from app.agents.response import describe_action
+from app.agents.response import describe_action, describe_result
 from app.core.logging import get_logger
 from app.graph.deps import AgentDeps
 from app.models.types import utcnow
@@ -64,6 +64,22 @@ BLOCKED_REPLY = (
     "§3), and nothing was changed. Please check that document with the owner, or ask me "
     "again in different words."
 )
+
+
+def blocked_reply(state: dict[str, Any]) -> str:
+    """The fixed BLOCK reply, honest about any approved action that already ran."""
+    done = [a for a in state.get("proposed_actions") or [] if a.get("status") == "done"]
+    if not done:
+        return BLOCKED_REPLY
+    lines = [
+        "I stopped this answer because it would have followed instructions from an "
+        "outside document, such as a supplier flyer, which the shop's rules do not allow "
+        "(POL-AI-001 §3).",
+        "\n**Done before that, as approved** (only these were changed):",
+        *[f"- {describe_result(a)}" for a in done],
+        "\nPlease check that document with the owner, or ask me again in different words.",
+    ]
+    return "\n".join(lines)
 
 
 def agent_node(name: str, run: AgentRun) -> Node:
@@ -191,7 +207,7 @@ async def _finalize(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
         return AgentOutcome(update={"outcome": "completed"}, summary="finished: fixed reply")
     if state.get("validation_result") == "BLOCK":
         return AgentOutcome(
-            update={"final_response": BLOCKED_REPLY, "outcome": "blocked", "sources": []},
+            update={"final_response": blocked_reply(state), "outcome": "blocked", "sources": []},
             summary="finished: blocked",
         )
     if not draft:

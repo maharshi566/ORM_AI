@@ -70,6 +70,9 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
         "missing_information": result.missing_information,
         "input_flags": checked.flags,
     }
+    if checked.text != state["user_query"]:
+        # Every later agent reads the cleaned message (no invisible characters).
+        update["user_query"] = checked.text
     if checked.flagged:
         update["warnings"] = [
             "The message contains text that tries to change ORM_AI's rules ("

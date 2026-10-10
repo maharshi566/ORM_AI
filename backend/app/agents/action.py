@@ -97,6 +97,9 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
     for action in actions:
         if action.get("status") not in RUNNABLE:
             continue
+        if not deps.run_actions:
+            action["result"] = "Not carried out: this is an evaluation run."
+            continue
         async with deps.session_factory() as session:
             result = await deps.call_tool(
                 session, state, AGENT, action["tool"], action["arguments"], approval=_grant(action)

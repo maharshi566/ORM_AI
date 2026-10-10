@@ -106,6 +106,7 @@ def check_actions(
     """Proposed actions whose arguments pass the tool's own validation."""
     actions: list[dict[str, Any]] = []
     warnings: list[str] = []
+    seen: set[str] = set()  # the same action twice would run twice (two keys)
     for index, proposal in enumerate(result.proposed_actions, start=1):
         spec = deps.registry.spec(proposal.tool)
         try:
@@ -124,6 +125,14 @@ def check_actions(
             problems = "; ".join(e["msg"] for e in exc.errors(include_url=False)[:3])
             warnings.append(f"Dropped a proposed {proposal.tool}: {problems}")
             continue
+        same = json.dumps(
+            [proposal.tool, {k: v for k, v in checked.items() if k != "idempotency_key"}],
+            sort_keys=True,
+        )
+        if same in seen:
+            warnings.append(f"Dropped a duplicate proposed {proposal.tool}.")
+            continue
+        seen.add(same)
         unknown = ids_in(json.dumps(checked)) - known_ids(state)
         if unknown:
             warnings.append(

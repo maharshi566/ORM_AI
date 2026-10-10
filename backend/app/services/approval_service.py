@@ -8,7 +8,10 @@
 2. checks each decision: every waiting action gets one (or one decision covers all),
    and changed details ("modify") must pass the tool's own input validation;
 3. checks that the paused run can still be resumed (its checkpoint is in the
-   database; with CHECKPOINTER=memory a restart loses it);
+   database; with CHECKPOINTER=memory a restart loses it), and asks the policy gate
+   again about the action as it will run (changed details, fresh records), so staff
+   cannot approve what now needs the owner. A change may not switch which record an
+   action is about;
 4. writes the decision **before** resuming: each ``approvals`` row gets its status,
    who decided, when and the final action, an ``audit_logs`` row is added per action,
    and the workflow is marked running again, all in one transaction. A crash after
@@ -17,16 +20,23 @@
    decision, the action agent runs what was approved, and the reply is written and
    validated as usual. The reply is returned in the same shape as ``POST /api/chat``.
 
+If the process dies between 4 and 5, the workflow stays "running" with every approval
+decided. The next call for it (after ``STALLED_AFTER_SECONDS``) sends the recorded
+decision again instead of answering 409.
+
 ``ApprovalService.status`` (``GET /api/approval/{workflow_id}``) shows what is waiting,
 for example after a restart or on a second device.
 """
 
+from datetime import UTC
 from typing import Any
 
 from langgraph.types import Command
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from app.agents import policy_gate
+from app.agents.human_review import changed_records
 from app.core.exceptions import ConflictError, ForbiddenError, InvalidRequestError, NotFoundError
 from app.core.logging import get_logger
 from app.models import Approval, AuditLog, User, Workflow
@@ -46,10 +56,14 @@ from app.services.chat_service import (
     paused_request,
     run_graph,
 )
+from app.tools.base import business_now
 
 logger = get_logger(__name__)
 
 STATUS_FOR = {"approve": "approved", "reject": "rejected", "modify": "modified"}
+# A workflow still "running" this long after its decision was recorded is taken to have
+# been cut off (crash, restart), and the recorded decision is sent again.
+STALLED_AFTER_SECONDS = 120
 
 
 class ApprovalService:
@@ -129,6 +143,14 @@ class ApprovalService:
     def _check_arguments(self, row: Approval, arguments: dict[str, Any] | None) -> None:
         if not arguments:
             raise InvalidRequestError(f"modify needs the new arguments for {row.action_type}.")
+        switched = changed_records((row.proposed_action or {}).get("arguments") or {}, arguments)
+        if switched:
+            raise InvalidRequestError(
+                f"A change may adjust amounts, quantities or wording, but not which record "
+                f"the action is about ({', '.join(switched)}). Reject it and ask ORM_AI "
+                "again about the other record.",
+                details={"changed": switched},
+            )
         spec = self.rt.registry.spec(row.action_type)
         if spec is None:
             raise InvalidRequestError(f"Unknown action {row.action_type}.")
@@ -154,6 +176,13 @@ class ApprovalService:
             user = await db.get(User, body.user_id)
             if user is None or user.shop_id != workflow.shop_id or not user.is_active:
                 raise ForbiddenError(f"User {body.user_id} does not work at this shop.")
+            if str(workflow.status) == "running":
+                recovered = await self._stalled_resume(db, workflow)
+                if recovered is not None:
+                    session_id, shop_id = workflow.session_id or "", workflow.shop_id
+                    resume = recovered
+                    await db.commit()
+                    return await self._resume(workflow_id, session_id, shop_id, resume, user.id)
             if str(workflow.status) != "awaiting_approval":
                 raise ConflictError(
                     f"Workflow {workflow_id} is not waiting for approval "
@@ -173,17 +202,35 @@ class ApprovalService:
                 raise ConflictError(f"Nothing in workflow {workflow_id} is waiting for approval.")
             choices = self._choices(rows, body)
             role = str(user.role)
+            now = business_now(self.rt.settings.business_date)
             for row in rows:
                 decision, arguments = choices[row.id]
-                needed = (row.proposed_action or {}).get("required_role")
-                if decision != "reject" and needed == "owner" and role != "owner":
-                    raise ForbiddenError(
-                        f"Only the shop owner can approve {row.action_type}: "
-                        f"{row.reason} {user.name} can reject it, or ask the owner.",
-                        details={"approval_id": row.id, "required_role": "owner"},
-                    )
+                if decision == "reject":
+                    continue
                 if decision == "modify":
                     self._check_arguments(row, arguments)
+                proposed = row.proposed_action or {}
+                final_args = arguments if decision == "modify" else proposed.get("arguments")
+                # The role asked for when the run paused, or what the gate says now about
+                # the (possibly changed) action, whichever is stricter.
+                fresh = await policy_gate.required_role(
+                    {
+                        "action_id": proposed.get("action_id"),
+                        "tool": row.action_type,
+                        "arguments": final_args or {},
+                    },
+                    db,
+                    {"shop_id": workflow.shop_id},
+                    now,
+                )
+                needs_owner = "owner" in {proposed.get("required_role"), fresh.required_role}
+                if needs_owner and role != "owner":
+                    reasons = "; ".join(fresh.reasons) or row.reason
+                    raise ForbiddenError(
+                        f"Only the shop owner can approve {row.action_type} ({reasons}). "
+                        f"{user.name} can reject it, or ask the owner.",
+                        details={"approval_id": row.id, "required_role": "owner"},
+                    )
             if await self._paused_request(workflow) is None:
                 raise ConflictError(
                     f"Workflow {workflow_id} can no longer be resumed: its saved state is "
@@ -244,16 +291,80 @@ class ApprovalService:
             role=role,
             decisions={k: v["decision"] for k, v in resume["decisions"].items()},
         )
-        summary = ", ".join(
-            f"{v['decision']} {k.split(':')[0]}" for k, v in resume["decisions"].items()
-        )
-        if session_id:
-            await self.rt.memory.append(
-                session_id, "user", f"[decision by {user.id}] {summary}", workflow_id=workflow_id
-            )
+        return await self._resume(workflow_id, session_id, shop_id, resume, user.id)
+
+    async def _resume(
+        self,
+        workflow_id: str,
+        session_id: str,
+        shop_id: str,
+        resume: dict[str, Any],
+        decided_by: str,
+    ) -> ChatResponse:
         config = graph_config(workflow_id, session_id, shop_id)
         base = {"workflow_id": workflow_id, "session_id": session_id, "shop_id": shop_id}
         final = await run_graph(self.rt, Command(resume=resume), config, make_deps(self.rt), base)
         if paused_request(final) is None and not final.get("final_response"):
             final.setdefault("outcome", "failed")
+        if session_id:
+            summary = ", ".join(
+                f"{v['decision']} {k.split(':')[0]}" for k, v in resume["decisions"].items()
+            )
+            try:
+                await self.rt.memory.append(
+                    session_id,
+                    "user",
+                    f"[decision by {decided_by}] {summary}",
+                    workflow_id=workflow_id,
+                )
+            except Exception as exc:  # memory must not undo a decision that already ran
+                logger.warning("approval_memory_failed", workflow_id=workflow_id, error=repr(exc))
         return await finish(self.rt, final, workflow_id, session_id)
+
+    async def _stalled_resume(self, db: Any, workflow: Workflow) -> dict[str, Any] | None:
+        """The recorded decision again, when a resume was cut off (a crash or restart).
+
+        The decision is committed before the run resumes. If the process died in
+        between, the workflow says "running", every approval is decided, and the saved
+        state is still paused at human review. After ``STALLED_AFTER_SECONDS`` (so a run
+        still in progress is not started twice) the same decision is sent again; the
+        actions' idempotency keys make that safe.
+        """
+        updated = workflow.updated_at
+        if updated is not None and updated.tzinfo is None:
+            updated = updated.replace(tzinfo=UTC)
+        if updated is not None and (utcnow() - updated).total_seconds() < STALLED_AFTER_SECONDS:
+            return None
+        rows = list(
+            (
+                await db.scalars(
+                    select(Approval)
+                    .where(Approval.workflow_id == workflow.id)
+                    .order_by(Approval.created_at)
+                )
+            ).all()
+        )
+        if not rows or any(str(row.status) == "pending" for row in rows):
+            return None
+        if await self._paused_request(workflow) is None:
+            return None
+        decider = await db.get(User, rows[0].decided_by) if rows[0].decided_by else None
+        verdicts = {"approved": "approve", "rejected": "reject", "modified": "modify"}
+        logger.warning("approval_resume_recovered", workflow_id=workflow.id)
+        workflow.updated_at = utcnow()
+        return {
+            "decided_by": rows[0].decided_by,
+            "role": str(decider.role) if decider else "staff",
+            "note": rows[0].decision_note,
+            "decided_at": rows[0].decided_at.isoformat() if rows[0].decided_at else None,
+            "decisions": {
+                (row.proposed_action or {}).get("action_id"): {
+                    "decision": verdicts[str(row.status)],
+                    "arguments": (row.final_action or {}).get("arguments")
+                    if str(row.status) == "modified"
+                    else None,
+                    "approval_id": row.id,
+                }
+                for row in rows
+            },
+        }

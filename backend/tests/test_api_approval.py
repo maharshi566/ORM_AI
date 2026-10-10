@@ -225,3 +225,80 @@ def test_a_lost_in_memory_state_is_explained(api, make_runtime) -> None:
 
     assert response.status_code == 409
     assert "can no longer be resumed" in response.json()["error"]["message"]
+
+
+def test_staff_cannot_change_an_action_into_one_for_the_owner(api) -> None:
+    paused = ask(
+        api,
+        "I counted PRD-0002 and found 6 fewer than the system. Please record the adjustment.",
+        "SHOP-001",
+    )
+    [waiting] = paused["approval"]["actions"]
+    bigger = {
+        "user_id": "USR-002",
+        "decisions": [
+            {
+                "approval_id": waiting["approval_id"],
+                "decision": "modify",
+                "arguments": {
+                    "product_id": "PRD-0002",
+                    "quantity_change": -20,
+                    "movement_type": "adjustment",
+                    "reason": "Physical count was lower than the system.",
+                },
+            }
+        ],
+    }
+    other_record = {
+        "user_id": "USR-001",
+        "decisions": [
+            {
+                "approval_id": waiting["approval_id"],
+                "decision": "modify",
+                "arguments": {**bigger["decisions"][0]["arguments"], "product_id": "PRD-0003"},
+            }
+        ],
+    }
+
+    staff = api.post(f"/api/approval/{paused['workflow_id']}", json=bigger)
+    switched = api.post(f"/api/approval/{paused['workflow_id']}", json=other_record)
+
+    assert staff.status_code == 403 and "owner" in staff.json()["error"]["message"]
+    assert switched.status_code == 422 and "product_id" in switched.json()["error"]["message"]
+
+
+async def test_a_resume_cut_off_by_a_crash_is_picked_up_again(
+    api, session_factory, monkeypatch
+) -> None:
+    from datetime import timedelta
+
+    from app.models.types import utcnow
+    from app.services.approval_service import ApprovalService
+
+    paused = ask(api, LATE_PO, "SHOP-002")
+    workflow_id = paused["workflow_id"]
+    original = ApprovalService._resume
+
+    async def crash(*args, **kwargs):
+        raise RuntimeError("the process died")
+
+    monkeypatch.setattr(ApprovalService, "_resume", crash)
+    with pytest.raises(RuntimeError):
+        api.post(f"/api/approval/{workflow_id}", json={"user_id": "USR-004", "decision": "approve"})
+    monkeypatch.setattr(ApprovalService, "_resume", original)
+
+    too_soon = api.post(
+        f"/api/approval/{workflow_id}", json={"user_id": "USR-004", "decision": "approve"}
+    )
+    async with session_factory() as session:
+        workflow = await session.get(Workflow, workflow_id)
+        workflow.updated_at = utcnow() - timedelta(minutes=5)
+        await session.commit()
+    later = api.post(
+        f"/api/approval/{workflow_id}", json={"user_id": "USR-004", "decision": "reject"}
+    )
+
+    assert too_soon.status_code == 409  # it may still be running: not started twice
+    assert later.status_code == 200
+    # The recorded decision (approve) is used, not the new one (reject).
+    assert later.json()["proposed_actions"][0]["status"] == "done"
