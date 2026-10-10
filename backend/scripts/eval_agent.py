@@ -4,6 +4,7 @@ Usage (from backend/, with PostgreSQL seeded and the knowledge base ingested):
 
     python -m scripts.eval_agent              # all 10 cases
     python -m scripts.eval_agent --case A04   # one case, printing the full answer
+    python -m scripts.eval_agent --pause 30   # wait between cases (free tiers)
 
 Needs LLM_MODEL_FAST / LLM_MODEL_SMART and a key or gateway in .env (check with
 python -m scripts.check_llm first). Each case makes about 4-6 model calls, so the
@@ -47,6 +48,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--case", action="append", help="run only this case ID (repeatable)")
     parser.add_argument("--min", type=float, default=0.8, help="gate for both scores (0.8)")
     parser.add_argument("--dataset", default=str(DATASET), help="cases YAML file")
+    parser.add_argument(
+        "--pause",
+        type=float,
+        default=0.0,
+        help="seconds to wait between cases, to stay under a free tier's per-minute limit",
+    )
     return parser.parse_args(argv)
 
 
@@ -97,6 +104,8 @@ async def run(args: argparse.Namespace) -> int:
             "conversation_history": [],
         }
         config = {"configurable": {"thread_id": workflow_id}, "recursion_limit": RECURSION_LIMIT}
+        if args.pause and case is not cases[0]:
+            await asyncio.sleep(args.pause)
         print(f"{case.id} {case.message[:70]} ...", flush=True)
         return await graph.ainvoke(state, config=config, context=deps)
 

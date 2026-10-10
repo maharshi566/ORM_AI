@@ -197,7 +197,28 @@ LLM_MODEL_FAST=openai/gpt-5.4-mini
 LLM_MODEL_SMART=openai/gpt-5.4-mini
 ```
 
-With B or C, embeddings would also go to the gateway. To keep them on OpenAI (so the
+**D. Free: Google's Gemini API** (free tier; no card needed). Make a key at
+<https://aistudio.google.com/apikey>. Free-tier prompts may be used by Google to improve
+its products, which is fine for this project's made-up shops but not for a real shop's
+records. The free tier also has per-minute and per-day limits (shown in AI Studio), so
+the evaluation should pause between cases: `python -m scripts.eval_agent --pause 30`.
+
+```env
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+LLM_API_KEY=...your Gemini key...
+LLM_MODEL_FAST=gemini-3.5-flash-lite
+LLM_MODEL_SMART=gemini-3.8-flash
+EMBEDDING_MODEL=hash
+```
+
+Limits count per model, so two different models spread the load. If `check_llm` warns
+about tool calling for the Flash-Lite model, use `gemini-3.8-flash` for both.
+`EMBEDDING_MODEL=hash` keeps search free and offline. Other free options:
+OpenRouter's `:free` models (20 requests a minute, 50 a day until you have bought
+USD 10 of credit), and your own OmniRoute with its free providers
+([omniroute.md](omniroute.md)).
+
+With B, C or D, embeddings would also go to the gateway. To keep them on OpenAI (so the
 ChromaDB collection you already ingested stays valid), add:
 
 ```env
