@@ -41,6 +41,11 @@ Purpose = Literal["chat", "embeddings"]
 # The OpenAI SDK refuses an empty key, but a local gateway may not ask for one.
 PLACEHOLDER_KEY = "no-key-needed"
 OPENAI_URL = "https://api.openai.com/v1"
+GEMINI_HOST = "generativelanguage.googleapis.com"
+GEMINI_URL = f"https://{GEMINI_HOST}/v1beta/openai"
+GEMINI_KEYS_PAGE = "aistudio.google.com/apikey"
+# Never copy something that looks like a key into a message or log line.
+KEY_PATTERN = re.compile(r"\b(?:(?:sk|lsv2)[-_][A-Za-z0-9_*-]{4,}|AIza[0-9A-Za-z_-]{12,})")
 
 
 class LLMConfigError(ValueError):
@@ -70,6 +75,11 @@ class LLMEndpoint:
         return self.base_url is not None
 
     @property
+    def is_gemini(self) -> bool:
+        """True for Google's OpenAI-style endpoint (see GEMINI_URL)."""
+        return bool(self.base_url) and urlsplit(self.base_url or "").hostname == GEMINI_HOST
+
+    @property
     def has_key(self) -> bool:
         return bool(self.key_source)
 
@@ -80,7 +90,8 @@ class LLMEndpoint:
             return "none"
         key = self.api_key
         prefix = next(
-            (p for p in ("sk-proj-", "sk-svcacct-", "sk-or-", "sk-") if key.startswith(p)), ""
+            (p for p in ("sk-proj-", "sk-svcacct-", "sk-or-", "sk-", "AIza") if key.startswith(p)),
+            "",
         )
         tail = key[-4:] if len(key) >= 16 else ""
         return f"{prefix}…{tail}"
@@ -99,6 +110,8 @@ class LLMEndpoint:
         """For messages: ``OpenAI`` or ``the gateway at http://localhost:20128/v1``."""
         if self.base_url is None:
             return "OpenAI"
+        if self.is_gemini:
+            return "Google Gemini"
         return f"the gateway at {_without_credentials(self.base_url)}"
 
 
@@ -204,27 +217,51 @@ class LLMFailure:
     retryable: bool  # True when trying again later could work
 
 
+def _error_body(exc: openai.APIStatusError) -> dict[str, object]:
+    """The JSON error object. OpenAI sends one object; Google sends a list of them."""
+    body = exc.body
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        body = body[0].get("error", body[0])
+    return body if isinstance(body, dict) else {}
+
+
 def _server_detail(exc: openai.APIStatusError) -> str:
     """The server's own error sentence, shortened; empty when it did not send one.
 
     Only the ``message`` field of a JSON error is used. A web page (for example a proxy's
     "502 Bad Gateway") or a raw body is never copied into our messages.
     """
-    body = exc.body
-    text = body.get("message") if isinstance(body, dict) else None
+    text = _error_body(exc).get("message")
     if not isinstance(text, str):
         return ""
     text = re.sub(r"\s+", " ", text).strip()
-    text = re.sub(r"\b(sk|lsv2)[-_][A-Za-z0-9_*-]{4,}", "[key]", text)  # never echo a key back
-    return f" The server said: {text[:200]}" if text else ""
+    text = KEY_PATTERN.sub("[key]", text)  # never echo a key back
+    return f" The server said: {text[:240]}" if text else ""
 
 
 def _error_code(exc: openai.APIStatusError) -> str:
     """The provider's machine-readable error code, such as 'insufficient_quota'."""
     code = getattr(exc, "code", None)
-    if not code and isinstance(exc.body, dict):
-        code = exc.body.get("code") or exc.body.get("type")
+    body = _error_body(exc)
+    if not code:
+        code = body.get("code") or body.get("type")
     return str(code or "")
+
+
+def is_key_rejected(exc: Exception) -> bool:
+    """True when the provider refused the key itself.
+
+    OpenAI and most gateways answer 401. Google answers 400 with API_KEY_INVALID
+    ("API key not valid"), so a plain status check would call it a bad request.
+    """
+    if isinstance(exc, openai.AuthenticationError):
+        return True
+    if not isinstance(exc, openai.BadRequestError):
+        return False
+    text = str(exc.body).lower()
+    return any(
+        marker in text for marker in ("api_key_invalid", "api key not valid", "api key expired")
+    )
 
 
 def explain_error(
@@ -236,15 +273,23 @@ def explain_error(
     for errors that cannot carry a key; a rejected key gets a fixed sentence instead.
     """
     where = endpoint.where
-    gateway = endpoint.is_gateway
+    gateway = endpoint.is_gateway and not endpoint.is_gemini
 
-    if isinstance(exc, openai.AuthenticationError):
+    if is_key_rejected(exc):
         if endpoint.has_key and endpoint.key_from_environment:
             fix = (
                 f"The key comes from the {endpoint.key_source} environment variable on this "
                 "computer, which wins over .env. Remove that variable, or put a valid key in "
                 'it (docs/agents.md, "The key is rejected").'
             )
+        elif endpoint.has_key and endpoint.is_gemini:
+            fix = (
+                f"Check {endpoint.key_source} in .env: compare its last four characters with "
+                f"your keys at {GEMINI_KEYS_PAGE}. A key cut short when pasting, or one that "
+                "was deleted, gives this error. Create a new key there if unsure."
+            )
+        elif endpoint.is_gemini:
+            fix = f"No key is set. Create one at {GEMINI_KEYS_PAGE} and put it in LLM_API_KEY."
         elif endpoint.has_key and gateway:
             fix = (
                 f"Check {endpoint.key_source} in .env and the key shown in the gateway's dashboard."
@@ -266,7 +311,11 @@ def explain_error(
 
     if isinstance(exc, openai.PermissionDeniedError):
         hint = (
-            " Check the key's permissions in the gateway's dashboard."
+            f" Create the key in Google AI Studio ({GEMINI_KEYS_PAGE}). A key from another "
+            "Google Cloud project needs the Generative Language API turned on. The Gemini API "
+            "is also not offered in every country."
+            if endpoint.is_gemini
+            else " Check the key's permissions in the gateway's dashboard."
             if gateway
             else " A restricted key needs permission for model requests: at "
             "platform.openai.com/api-keys, edit the key and set Permissions to All (or allow "
@@ -281,7 +330,10 @@ def explain_error(
     if isinstance(exc, openai.NotFoundError):
         what = f"the model {model!r}" if model else "the model"
         hint = (
-            f" Check that the URL ends in /v1 and that {what} exists on the gateway "
+            f" Check the spelling of {what}: python -m scripts.check_llm --list shows the "
+            "Gemini models your key can use."
+            if endpoint.is_gemini
+            else f" Check that the URL ends in /v1 and that {what} exists on the gateway "
             "(python -m scripts.check_llm lists its models)."
             if gateway
             else f" Check that {what} exists and your account can use it."
@@ -299,6 +351,15 @@ def explain_error(
             "limit there, wait a few minutes and try again."
         )
         return LLMFailure(f"{where}: no API credit (insufficient_quota).{fix}", retryable=False)
+
+    if isinstance(exc, openai.RateLimitError) and endpoint.is_gemini:
+        return LLMFailure(
+            f"Google Gemini: free-tier limit reached{f' for {model}' if model else ''}."
+            f"{_server_detail(exc)} Limits are per model, per minute and per day (the day "
+            "resets at midnight Pacific time); aistudio.google.com shows yours. Wait a "
+            "minute, use a lighter model, or set LLM_MODEL_FALLBACK to another Gemini model.",
+            retryable=True,
+        )
 
     if isinstance(exc, openai.RateLimitError):
         hint = (

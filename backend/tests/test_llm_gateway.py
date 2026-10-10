@@ -21,10 +21,12 @@ from app.rag.reranker import HeuristicReranker, LLMReranker, build_reranker
 from app.rag.retriever import RetrievedChunk
 from app.services.llm_check import CheckReport, format_report, list_model_ids, run_checks
 from app.services.llm_service import (
+    GEMINI_URL,
     PLACEHOLDER_KEY,
     LLMConfigError,
     LLMEndpoint,
     explain_error,
+    is_key_rejected,
     is_remote_plain_http,
     make_client,
     resolve_endpoint,
@@ -357,6 +359,72 @@ def test_an_account_without_credit_is_not_called_a_rate_limit() -> None:
     assert "rate limit" in limit.message and limit.retryable
 
 
+GEMINI_KEY = "AIza" + "b" * 31 + "Q7xZ"
+
+
+def _gemini_error(cls: type[openai.APIStatusError], status: int, body: object):
+    request = httpx2.Request("POST", f"{GEMINI_URL}/chat/completions")
+    return cls("error", response=httpx2.Response(status, request=request), body=body)
+
+
+def test_gemini_is_named_and_its_key_hinted() -> None:
+    endpoint = resolve_endpoint(settings(llm_base_url=GEMINI_URL, llm_api_key=GEMINI_KEY))
+
+    assert endpoint.is_gemini and endpoint.where == "Google Gemini"
+    assert endpoint.key_hint == "AIza…Q7xZ"
+    assert not resolve_endpoint(settings(llm_base_url="http://localhost:20128/v1")).is_gemini
+
+
+def test_a_bad_gemini_key_is_called_a_bad_key_even_though_google_says_400() -> None:
+    """Google answers a bad key with HTTP 400 and a list-shaped body."""
+    bad_key = _gemini_error(
+        openai.BadRequestError,
+        400,
+        [
+            {
+                "error": {
+                    "code": 400,
+                    "message": "API key not valid. Please pass a valid API key.",
+                    "status": "INVALID_ARGUMENT",
+                    "details": [{"reason": "API_KEY_INVALID"}],
+                }
+            }
+        ],
+    )
+    endpoint = resolve_endpoint(settings(llm_base_url=GEMINI_URL, llm_api_key=GEMINI_KEY))
+
+    failure = explain_error(bad_key, endpoint, doing="chat")
+
+    assert is_key_rejected(bad_key)
+    assert failure.message.startswith("Google Gemini rejected the API key.")
+    assert "aistudio.google.com/apikey" in failure.message and not failure.retryable
+    assert GEMINI_KEY not in failure.message
+
+
+def test_the_gemini_free_tier_limit_is_explained() -> None:
+    limit = _gemini_error(
+        openai.RateLimitError,
+        429,
+        [
+            {
+                "error": {
+                    "code": 429,
+                    "message": f"Quota exceeded for metric: free_tier_requests, limit: 10, "
+                    f"model: gemini-3.8-flash (key {GEMINI_KEY}). Please retry in 32s.",
+                    "status": "RESOURCE_EXHAUSTED",
+                }
+            }
+        ],
+    )
+    endpoint = resolve_endpoint(settings(llm_base_url=GEMINI_URL, llm_api_key=GEMINI_KEY))
+
+    failure = explain_error(limit, endpoint, doing="chat", model="gemini-3.8-flash")
+
+    assert "free-tier limit reached for gemini-3.8-flash" in failure.message
+    assert "retry in 32s" in failure.message and "LLM_MODEL_FALLBACK" in failure.message
+    assert failure.retryable and GEMINI_KEY not in failure.message and "[key]" in failure.message
+
+
 # ------------------------------------------------------------ the reranker
 
 
@@ -588,6 +656,14 @@ async def test_listing_models_sorts_and_filters_by_text() -> None:
 
     assert (some, problem) == (["fake/embed-small"], "")
     assert every == sorted(gateway.models)
+
+
+async def test_googles_models_prefix_is_dropped_from_the_list() -> None:
+    gateway = FakeGateway(api_key=KEY, models=("models/gemini-3.8-flash", "models/x-lite"))
+
+    ids, problem = await list_model_ids(gateway_settings(), http_client=gateway.client())
+
+    assert (ids, problem) == (["gemini-3.8-flash", "x-lite"], "")
 
 
 async def test_listing_models_explains_what_is_wrong() -> None:

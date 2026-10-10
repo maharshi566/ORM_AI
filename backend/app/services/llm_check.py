@@ -138,9 +138,14 @@ async def _guarded(
 # ------------------------------------------------------------------- probes
 
 
+def _model_id(raw: str) -> str:
+    """Google lists models as "models/gemini-3.8-flash"; chat requests use the short name."""
+    return raw.removeprefix("models/")
+
+
 async def _list_models(client: AsyncOpenAI, wanted: list[str]) -> tuple[Outcome, list[str]]:
     page = await client.models.list()
-    ids = [model.id for model in page.data]
+    ids = [_model_id(model.id) for model in page.data]
     if not ids:
         return (
             (
@@ -456,7 +461,7 @@ async def list_model_ids(
     )
     try:
         page = await client.models.list()
-        ids = sorted(model.id for model in page.data)
+        ids = sorted(_model_id(model.id) for model in page.data)
     except openai.OpenAIError as exc:
         return [], explain_error(exc, endpoint, doing="model list").message
     except _BAD_SHAPE:

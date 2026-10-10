@@ -2,6 +2,7 @@
 
 It answers just enough of the API: ``GET /v1/models``, ``POST /v1/chat/completions``
 (plain, JSON mode, strict JSON schema and tool calls) and ``POST /v1/embeddings``.
+With ``gemini=True`` it also enforces two rules of Google's OpenAI-style endpoint.
 Tests reach it through an in-process HTTP client, so no network, port or real service
 is involved, and every request is recorded in ``gateway.requests`` so a test can check
 what the app sent.
@@ -28,6 +29,32 @@ class Recorded:
     body: dict[str, Any]
 
 
+GEMINI_UNKNOWN = ("additionalProperties", "$ref", "$defs", "title", "default", "anyOf")
+SIGNATURE = {"google": {"thought_signature": "c2lnbmF0dXJlLTE="}}
+
+
+def _unknown_keywords(node: Any, inside_properties: bool = False) -> list[str]:
+    """Schema keywords Gemini refuses in tool parameters (property names are fine)."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if not inside_properties and key in GEMINI_UNKNOWN:
+                found.append(key)
+            found += _unknown_keywords(value, inside_properties=key == "properties")
+    elif isinstance(node, list):
+        for value in node:
+            found += _unknown_keywords(value)
+    return found
+
+
+def _missing_signatures(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        for call in message.get("tool_calls") or []:
+            if call.get("extra_content") != SIGNATURE:
+                return True
+    return False
+
+
 def _error(status: int, message: str, code: str = "error") -> JSONResponse:
     return JSONResponse(
         {"error": {"message": message, "type": "invalid_request_error", "code": code}},
@@ -46,6 +73,11 @@ class FakeGateway:
     json_schema: bool = True  # False: strict JSON-schema output is rejected with 400
     replies: list[str] = field(default_factory=list)  # JSON-mode/schema answers, in order
     tool_calls: bool = True  # False: tools are ignored and the model answers in text
+    # True: behave like Google Gemini's OpenAI-style endpoint. Tool calls carry a
+    # thought signature that must come back in the next request, and tool schemas
+    # with keywords Gemini does not know (additionalProperties, $ref, ...) get 400.
+    gemini: bool = False
+    schema_error: str = ""  # with json_schema=False: the 400 message to send instead
     dimensions: int = 8
     fail: dict[str, int] = field(default_factory=dict)  # path -> status to answer with
     requests: list[Recorded] = field(default_factory=list)
@@ -105,19 +137,37 @@ class FakeGateway:
         messages = body.get("messages", [])
         last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
 
-        if body.get("tools") and self.tool_calls:
-            call = {
+        if self.gemini and body.get("tools"):
+            unknown = _unknown_keywords([t["function"].get("parameters") for t in body["tools"]])
+            if unknown:
+                return _error(
+                    400,
+                    f'Invalid JSON payload received. Unknown name "{unknown[0]}" at '
+                    "'tools[0].function_declarations[0].parameters': Cannot find field.",
+                )
+        if self.gemini and _missing_signatures(messages):
+            return _error(
+                400, "Function call is missing a thought_signature in functionCall parts."
+            )
+
+        if body.get("tools") and messages and messages[-1]["role"] == "tool":
+            message["content"] = "done"  # the tool results are in, so the model answers
+        elif body.get("tools") and self.tool_calls:
+            call: dict[str, Any] = {
                 "id": "call_1",
                 "type": "function",
                 "function": {"name": "get_stock", "arguments": json.dumps({"sku": "KIR-001"})},
             }
+            if self.gemini:
+                call["extra_content"] = SIGNATURE
             message = {"role": "assistant", "content": None, "tool_calls": [call]}
             finish = "tool_calls"
         elif (body.get("response_format") or {}).get("type") == "json_schema":
             if not self.json_schema:
                 return _error(
                     400,
-                    "Invalid parameter: 'response_format' of type 'json_schema' is not "
+                    self.schema_error
+                    or "Invalid parameter: 'response_format' of type 'json_schema' is not "
                     "supported with this model.",
                 )
             message["content"] = self.replies.pop(0) if self.replies else '{"status": "ok"}'

@@ -205,14 +205,34 @@ the evaluation should pause between cases: `python -m scripts.eval_agent --pause
 
 ```env
 LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
-LLM_API_KEY=...your Gemini key...
+LLM_API_KEY=...your Gemini key (starts with AIza)...
 LLM_MODEL_FAST=gemini-3.5-flash-lite
 LLM_MODEL_SMART=gemini-3.8-flash
+LLM_MODEL_FALLBACK=gemini-3.6-flash
+LLM_REASONING_EFFORT=low
+LLM_MAX_RETRIES=5
 EMBEDDING_MODEL=hash
 ```
 
-Limits count per model, so two different models spread the load. If `check_llm` warns
-about tool calling for the Flash-Lite model, use `gemini-3.8-flash` for both.
+Limits count per model, so two different models spread the load, and the fallback
+model takes over when one of them hits its limit. `LLM_REASONING_EFFORT=low` keeps
+Gemini's thinking short (it cannot be switched off on Gemini 3), which makes replies
+faster and uses less of the free quota. `LLM_MAX_RETRIES=5` lets the client wait and
+retry when a per-minute limit is hit. If `check_llm` warns about tool calling for the
+Flash-Lite model, use `gemini-3.8-flash` for both.
+
+What the code does for Gemini, so you do not have to:
+
+- **Thought signatures.** Gemini 3 attaches a signature to every tool call and refuses
+  the next request (HTTP 400) if it is not sent back. The client keeps the model's
+  turn exactly as Gemini wrote it.
+- **Tool schemas.** Gemini refuses some JSON Schema words that Pydantic writes
+  (`additionalProperties`, `$ref`). Tool definitions are sent in a plain subset
+  (`app/services/portable_schema.py`); the ToolRegistry still checks every call
+  against the full model.
+- **Messages.** Google says "HTTP 400" for a bad key; the app still calls it a bad key
+  and points to aistudio.google.com/apikey. A free-tier limit gets its own message with
+  Google's own words ("Please retry in 32s").
 `EMBEDDING_MODEL=hash` keeps search free and offline. Other free options:
 OpenRouter's `:free` models (20 requests a minute, 50 a day until you have bought
 USD 10 of credit), and your own OmniRoute with its free providers

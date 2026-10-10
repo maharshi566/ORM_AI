@@ -11,8 +11,16 @@ import pytest
 from pydantic import BaseModel
 
 from app.config.settings import Settings
-from app.services.chat_model import LLMError, OpenAIChatModel, chat_model_problem
-from tests.fake_gateway import BASE_URL, FakeGateway
+from app.services.chat_model import (
+    LLMError,
+    OpenAIChatModel,
+    ToolCallRequest,
+    ToolRoundReply,
+    _raw_assistant_message,
+    chat_model_problem,
+)
+from app.tools.registry import AGENT_TOOLS, ToolRegistry
+from tests.fake_gateway import BASE_URL, SIGNATURE, FakeGateway
 
 KEY = "sk-gateway-key-123"
 
@@ -199,3 +207,124 @@ async def test_reasoning_effort_is_sent_only_when_set() -> None:
 
     assert "reasoning_effort" not in plain.sent_to("/v1/chat/completions")[0].body
     assert tuned.sent_to("/v1/chat/completions")[0].body["reasoning_effort"] == "low"
+
+
+# ------------------------------------------------------------ Gemini and other providers
+
+STOCK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_stock",
+        "description": "Stock for one SKU",
+        "parameters": {"type": "object", "properties": {"sku": {"type": "string"}}},
+    },
+}
+
+
+async def test_gemini_thought_signatures_go_back_with_the_tool_results() -> None:
+    """Gemini 3 refuses the second round (HTTP 400) if the signature is dropped."""
+    gateway = FakeGateway(api_key=KEY, gemini=True)
+    llm = model(gateway)
+
+    first = await llm.tool_round(
+        system="Use tools.", messages=USER, tools=[STOCK_TOOL], tier="fast"
+    )
+    [call] = first.tool_calls
+    history = [
+        *USER,
+        first.assistant_message(),
+        {"role": "tool", "tool_call_id": call.id, "content": '{"on_hand": 4}'},
+    ]
+    second = await llm.tool_round(
+        system="Use tools.", messages=history, tools=[STOCK_TOOL], tier="fast"
+    )
+
+    sent = gateway.sent_to("/v1/chat/completions")[1].body["messages"]
+    assert sent[2]["tool_calls"][0]["extra_content"] == SIGNATURE
+    assert sent[2]["tool_calls"][0]["id"] == sent[3]["tool_call_id"] == "call_1"
+    assert (second.content, second.tool_calls) == ("done", [])
+
+
+async def test_dropping_the_signature_is_what_gemini_refuses() -> None:
+    """The check above is real: the fake refuses a turn rebuilt without the signature."""
+    gateway = FakeGateway(api_key=KEY, gemini=True)
+    llm = model(gateway)
+    first = await llm.tool_round(system="x", messages=USER, tools=[STOCK_TOOL], tier="fast")
+    rebuilt = ToolRoundReply(content=first.content, tool_calls=first.tool_calls)
+
+    with pytest.raises(LLMError) as raised:
+        await llm.tool_round(
+            system="x",
+            messages=[
+                *USER,
+                rebuilt.assistant_message(),
+                {"role": "tool", "tool_call_id": "call_1", "content": "{}"},
+            ],
+            tools=[STOCK_TOOL],
+            tier="fast",
+        )
+
+    assert raised.value.kind == "rejected"
+
+
+async def test_every_tool_schema_is_sent_in_a_form_gemini_accepts() -> None:
+    gateway = FakeGateway(api_key=KEY, gemini=True)
+    registry = ToolRegistry()
+    tools = [schema for agent in AGENT_TOOLS for schema in registry.schemas_for(agent)]
+
+    reply = await model(gateway).tool_round(system="x", messages=USER, tools=tools, tier="fast")
+
+    [request] = gateway.sent_to("/v1/chat/completions")
+    sent = json.dumps(request.body["tools"])
+    assert reply.tool_calls  # accepted, not refused with 400
+    assert "additionalProperties" not in sent and "$ref" not in sent
+    assert [t["function"]["name"] for t in request.body["tools"]] == [
+        t["function"]["name"] for t in tools
+    ]
+
+
+async def test_a_schema_refusal_in_other_words_still_falls_back_to_json_mode() -> None:
+    gemini_words = (
+        'Invalid JSON payload received. Unknown name "additionalProperties" at '
+        "'generation_config.response_schema': Cannot find field."
+    )
+    gateway = FakeGateway(api_key=KEY, json_schema=False, schema_error=gemini_words, replies=[GOOD])
+
+    reply = await model(gateway).structured(Verdict, system="x", messages=USER, tier="fast")
+
+    formats = [r.body["response_format"]["type"] for r in gateway.sent_to("/v1/chat/completions")]
+    assert formats == ["json_schema", "json_object"]
+    assert reply.mode == "json_object" and reply.value.intent == "credit"
+
+
+async def test_a_request_refused_in_both_modes_is_not_blamed_on_the_format() -> None:
+    gateway = FakeGateway(api_key=KEY, json_schema=False, json_mode=False)
+    llm = model(gateway)
+
+    for _ in range(2):
+        with pytest.raises(LLMError) as raised:
+            await llm.structured(Verdict, system="x", messages=USER, tier="fast")
+        assert raised.value.kind == "rejected"
+
+    formats = [r.body["response_format"]["type"] for r in gateway.sent_to("/v1/chat/completions")]
+    assert formats == ["json_schema", "json_object"] * 2  # strict schemas tried again
+
+
+def test_output_only_fields_are_not_sent_back() -> None:
+    call = ToolCallRequest(id="call_9", name="get_stock", arguments="{}")
+    message = {
+        "role": "assistant",
+        "content": None,
+        "refusal": None,
+        "annotations": [],
+        "audio": {"id": "a1"},
+        "reasoning_details": [{"type": "reasoning.encrypted", "data": "xyz"}],
+        "tool_calls": [{"id": "", "type": "function", "function": {"name": "get_stock"}}],
+    }
+
+    raw = _raw_assistant_message(message, [(call, message["tool_calls"][0])])
+
+    assert set(raw) == {"role", "content", "tool_calls", "reasoning_details"}
+    assert raw["tool_calls"] == [
+        {"id": "call_9", "type": "function", "function": {"name": "get_stock", "arguments": "{}"}}
+    ]
