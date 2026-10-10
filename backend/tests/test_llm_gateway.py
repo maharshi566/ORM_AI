@@ -339,6 +339,24 @@ def test_a_refused_request_is_not_mistaken_for_a_bad_key() -> None:
     assert LONG_KEY not in failure.message and "[key]" in failure.message
 
 
+def test_an_account_without_credit_is_not_called_a_rate_limit() -> None:
+    request = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
+    no_credit = openai.RateLimitError(
+        "You exceeded your current quota",
+        response=httpx2.Response(429, request=request),
+        body={"message": "You exceeded your current quota", "code": "insufficient_quota"},
+    )
+    busy = _status_error(openai.RateLimitError, 429, "Rate limit reached for requests")
+    endpoint = resolve_endpoint(settings(openai_api_key=LONG_KEY))
+
+    credit = explain_error(no_credit, endpoint, doing="chat")
+    limit = explain_error(busy, endpoint, doing="chat")
+
+    assert "no API credit" in credit.message and "Billing" in credit.message
+    assert not credit.retryable  # waiting does not help; adding credit does
+    assert "rate limit" in limit.message and limit.retryable
+
+
 # ------------------------------------------------------------ the reranker
 
 

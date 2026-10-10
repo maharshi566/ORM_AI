@@ -11,7 +11,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import CheckConstraint, pool
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 import app.models  # noqa: F401  (registers every table on Base.metadata)
@@ -84,7 +84,25 @@ async def run_async_migrations() -> None:
     await connectable.dispose()
 
 
+def cannot_connect(exc: BaseException) -> str:
+    """One plain sentence instead of a 100-line traceback. Never includes the password."""
+    url = make_url(database_url)
+    where = f"{url.host or 'localhost'}:{url.port or 5432}"
+    if url.host in (None, "localhost", "127.0.0.1"):
+        fix = (
+            "Is Docker Desktop running? Start the database from the project folder with "
+            "'docker compose up -d postgres redis', wait until 'docker compose ps' says "
+            "healthy, then run this again."
+        )
+    else:
+        fix = "Check the address in DATABASE_URL in .env and your internet connection."
+    return f"Cannot reach PostgreSQL at {where} ({type(exc).__name__}). {fix}"
+
+
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    asyncio.run(run_async_migrations())
+    try:
+        asyncio.run(run_async_migrations())
+    except (OSError, TimeoutError) as exc:  # refused, unknown host, network down
+        raise SystemExit(cannot_connect(exc)) from None

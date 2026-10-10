@@ -219,6 +219,14 @@ def _server_detail(exc: openai.APIStatusError) -> str:
     return f" The server said: {text[:200]}" if text else ""
 
 
+def _error_code(exc: openai.APIStatusError) -> str:
+    """The provider's machine-readable error code, such as 'insufficient_quota'."""
+    code = getattr(exc, "code", None)
+    if not code and isinstance(exc.body, dict):
+        code = exc.body.get("code") or exc.body.get("type")
+    return str(code or "")
+
+
 def explain_error(
     exc: Exception, endpoint: LLMEndpoint, *, doing: str, model: str = ""
 ) -> LLMFailure:
@@ -281,6 +289,16 @@ def explain_error(
         return LLMFailure(
             f"{where}: {doing} failed with HTTP 404 (not found).{hint}", retryable=False
         )
+
+    if isinstance(exc, openai.RateLimitError) and _error_code(exc) == "insufficient_quota":
+        fix = (
+            " The provider behind the gateway has no credit left; see the gateway's dashboard."
+            if gateway
+            else " The key works, but OpenAI's API is prepaid and this account has no credit "
+            "left. Add credit at platform.openai.com (Settings, then Billing), set a monthly "
+            "limit there, wait a few minutes and try again."
+        )
+        return LLMFailure(f"{where}: no API credit (insufficient_quota).{fix}", retryable=False)
 
     if isinstance(exc, openai.RateLimitError):
         hint = (

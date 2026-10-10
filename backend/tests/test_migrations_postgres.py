@@ -1,6 +1,7 @@
 """Integration test: run the real Alembic migrations against PostgreSQL.
 
-Skipped unless TEST_DATABASE_URL points at a disposable database, for example:
+The full migration test is skipped unless TEST_DATABASE_URL points at a disposable
+database (the "cannot connect" test needs no database), for example:
 
     TEST_DATABASE_URL=postgresql+asyncpg://orm_ai:...@localhost:5432/orm_ai_test pytest
 """
@@ -20,7 +21,7 @@ from app.models import Base
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-pytestmark = pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not set")
+needs_postgres = pytest.mark.skipif(not TEST_DATABASE_URL, reason="TEST_DATABASE_URL is not set")
 
 
 def _alembic(url: str) -> Config:
@@ -55,6 +56,18 @@ async def _tables_without_rls(url: str) -> list[str]:
     return names
 
 
+def test_an_unreachable_database_gets_one_plain_sentence() -> None:
+    """No PostgreSQL listening: a short hint instead of a long traceback."""
+    with pytest.raises(SystemExit) as stopped:
+        command.upgrade(_alembic("postgresql+asyncpg://orm_ai:secret@127.0.0.1:1/orm_ai"), "head")
+
+    message = str(stopped.value)
+    assert message.startswith("Cannot reach PostgreSQL at 127.0.0.1:1")
+    assert "docker compose up -d postgres redis" in message
+    assert "secret" not in message
+
+
+@needs_postgres
 def test_upgrade_check_and_downgrade() -> None:
     # Synchronous on purpose: Alembic's env.py starts its own event loop.
     assert TEST_DATABASE_URL
