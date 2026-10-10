@@ -6,7 +6,7 @@ is in app/agents/schemas.py; these are the shapes the API sends and receives.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DependencyStatus(BaseModel):
@@ -177,6 +177,28 @@ class ApprovalDecisionRequest(BaseModel):
         default=[], max_length=20, description="Or one decision per action, by approval_id"
     )
     note: str | None = Field(default=None, max_length=500)
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"decision": "approve", "note": "Chase them today"},
+                {"user_id": "USR-003", "decision": "reject", "note": "I will call them myself"},
+                {
+                    "decisions": [
+                        {
+                            "approval_id": "paste one from the chat reply's approval block",
+                            "decision": "modify",
+                            "arguments": {
+                                "product_id": "PRD-0085",
+                                "new_selling_price": 358,
+                                "reason": "Owner set Rs 358 to stay within MRP.",
+                            },
+                        }
+                    ]
+                },
+            ]
+        }
+    )
 
 
 class ApprovalRecordView(BaseModel):

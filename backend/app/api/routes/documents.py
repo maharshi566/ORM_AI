@@ -73,9 +73,14 @@ async def upload(
     principal: CurrentUser,
     _: Annotated[None, Depends(rate_limit("upload"))],
     file: Annotated[UploadFile, File(description=".md, .txt or .pdf")],
-    title: Annotated[str, Form(max_length=200)] = "",
+    title: Annotated[str, Form(max_length=200, examples=["Diwali opening hours"])] = "",
     category: Annotated[documents_service.UploadCategory, Form()] = "sop",
-    shop_id: Annotated[str | None, Form(pattern=r"^SHOP-\d{3}$")] = None,
+    shop_id: Annotated[
+        str | None,
+        Form(
+            pattern=r"^SHOP-\d{3}$", examples=["SHOP-001"], description="Not needed when logged in"
+        ),
+    ] = None,
     trusted: Annotated[bool, Form(description="Owners only: agents may rely on it")] = False,
     ingest: Annotated[bool, Form(description="Start ingestion now")] = True,
 ) -> UploadResponse:
