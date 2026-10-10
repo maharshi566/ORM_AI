@@ -19,7 +19,7 @@ from app.models import AgentRun
 from app.models.types import utcnow
 from app.rag.retriever import KnowledgeRetriever
 from app.services.chat_model import ChatModel
-from app.tools.base import ToolContext, ToolResult
+from app.tools.base import ApprovalGrant, ToolContext, ToolResult
 from app.tools.registry import ToolRegistry
 
 logger = get_logger(__name__)
@@ -41,7 +41,13 @@ class AgentDeps:
     record_to_db: bool = True
     on_event: EventSink | None = None  # progress events (the SSE stream in Phase 6)
 
-    def tool_context(self, session: AsyncSession, state: dict[str, Any], agent: str) -> ToolContext:
+    def tool_context(
+        self,
+        session: AsyncSession,
+        state: dict[str, Any],
+        agent: str,
+        approval: ApprovalGrant | None = None,
+    ) -> ToolContext:
         clients = dict(self.clients)
         if self.knowledge is not None:
             clients["knowledge"] = self.knowledge
@@ -51,7 +57,7 @@ class AgentDeps:
             actor=agent,
             now=self.now,
             workflow_id=state.get("workflow_id"),
-            approval=None,  # Phase 5: set only by the approval step
+            approval=approval,  # only the action agent passes one, from a recorded decision
             log_session_factory=self.session_factory if self.record_to_db else None,
             clients=clients,
         )
@@ -63,8 +69,10 @@ class AgentDeps:
         agent: str,
         name: str,
         arguments: dict[str, Any],
+        *,
+        approval: ApprovalGrant | None = None,
     ) -> ToolResult:
-        ctx = self.tool_context(session, state, agent)
+        ctx = self.tool_context(session, state, agent, approval)
         return await self.registry.call(name, arguments, ctx, agent=agent)
 
     async def emit(self, event: dict[str, Any]) -> None:

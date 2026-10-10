@@ -3,12 +3,16 @@
     START -> triage -> supervisor -+-> data_retrieval -> supervisor
                                    +-> knowledge      -> supervisor
                                    +-> investigation -+-> data_retrieval (need more data)
-                                   |                  +-> human_review -> respond
+                                   |                  +-> human_review -+-> action -> respond
+                                   |                  |   (may pause)   +-> respond
                                    |                  +-> respond
                                    +-> respond -> validate -+-> respond (RETRY)
                                    |                        +-> finalize -> END
                                    +-> clarify -> finalize
                                    +-> finalize
+
+human_review may pause the run with ``interrupt()`` until a person decides; the
+approval API resumes it (app/services/approval_service.py).
 
 The supervisor is the hub: every specialist reports back to it, and it decides who
 runs next. ``docs/agent-graph.md`` shows the same graph as a Mermaid diagram, drawn
@@ -26,8 +30,8 @@ from app.graph.checkpointer import SQLCheckpointSaver
 from app.graph.deps import AgentDeps
 from app.graph.state import AgentState
 
-# Enough for the longest allowed path (two extra data loops and two rewrites), with
-# room to spare; LangGraph stops a run that goes beyond it.
+# Enough for the longest allowed path (two extra data loops, review, action and two
+# rewrites), with room to spare; LangGraph stops a run that goes beyond it.
 RECURSION_LIMIT = 50
 
 
@@ -39,6 +43,7 @@ def build_graph() -> StateGraph:
     graph.add_node("knowledge", nodes.knowledge_node)
     graph.add_node("investigation", nodes.investigation_node)
     graph.add_node("human_review", nodes.human_review_node)
+    graph.add_node("action", nodes.action_node)
     graph.add_node("respond", nodes.respond_node)
     graph.add_node("validate", nodes.validate_node)
     graph.add_node("clarify", nodes.clarify_node)
@@ -52,7 +57,8 @@ def build_graph() -> StateGraph:
     graph.add_conditional_edges(
         "investigation", edges.after_investigation, edges.AFTER_INVESTIGATION
     )
-    graph.add_edge("human_review", "respond")
+    graph.add_conditional_edges("human_review", edges.after_review, edges.AFTER_REVIEW)
+    graph.add_edge("action", "respond")
     graph.add_edge("respond", "validate")
     graph.add_conditional_edges("validate", edges.after_validation, edges.AFTER_VALIDATION)
     graph.add_edge("clarify", "finalize")

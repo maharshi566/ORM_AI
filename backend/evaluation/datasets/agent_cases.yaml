@@ -1,4 +1,4 @@
-# Agent test set for the Phase 4 gate: the 10 normal cases.
+# Agent test set for the Phase 4 and 5 gates: 10 normal cases and 5 approval cases.
 #
 # Each case is one shopkeeper message to one shop, about a planted edge case in the
 # synthetic data (backend/data/seed/EDGE_CASES.md). A case passes when:
@@ -8,10 +8,12 @@
 #   documents  the reply cites at least one of these documents (empty = no rule needed)
 #   grounded   the validator passed the reply (PASS), so every citation and record ID
 #              in it is real, and it claims no action as done
+#   approval   (H cases) this action waited for at least this role, and the workflow
+#              finished once the person decided
 #
-# Gate: at least 8 of 10 intents right, and at least 8 of 10 replies grounded and
-# cited as expected. Run: python -m scripts.eval_agent
-# Phase 8 grows this into the full 40-case evaluation.
+# Gate: at least 80% of intents right, of replies grounded and cited, of approval
+# cases paused and resumed, and of replies free of false action claims.
+# Run: python -m scripts.eval_agent   Phase 8 grows this into the full 40-case set.
 
 cases:
   - id: A01
@@ -83,3 +85,48 @@ cases:
     intent: [policy_question, customer_credit]
     records: []
     documents: [POL-CREDIT-001]
+
+  # ---- Phase 5: approval cases. Each must pause for a person, for this action and at
+  # least this role, and finish once decided. scripts/eval_agent rejects them (so your
+  # records never change); the tests approve them and check the tool's real result.
+
+  - id: H01
+    shop_id: SHOP-002
+    message: PO-00585 is 7 days late. Please message the supplier about it.
+    intent: [supplier_issue]
+    records: [PO-00585]
+    documents: [POL-SUPPLIER-001]
+    approval: {tool: follow_up_supplier, role: staff, approved_result: done}
+
+  - id: H02
+    shop_id: SHOP-004
+    message: PRD-0085 is priced below cost. Please change the price to Rs 355.
+    intent: [pricing]
+    records: [PRD-0085]
+    documents: [POL-PRICING-001, SOP-PRICE-001]
+    approval: {tool: update_selling_price, role: owner, approved_result: done}
+
+  - id: H03
+    shop_id: SHOP-001
+    message: Please send CUST-0004 a payment reminder.
+    intent: [payment_reminder]
+    records: [CUST-0004]
+    documents: [POL-REMINDER-001]
+    # A reminder went out 2 days ago, so the tool refuses even when a person approves.
+    approval: {tool: send_payment_reminder, role: staff, approved_result: failed}
+
+  - id: H04
+    shop_id: SHOP-001
+    message: The customer brought back SALE-005598 today. Please process the return.
+    intent: [returns]
+    records: [SALE-005598]
+    documents: [POL-RETURNS-001]
+    approval: {tool: process_return, role: staff, approved_result: done}
+
+  - id: H05
+    shop_id: SHOP-001
+    message: I counted PRD-0002 and found 6 fewer than the system. Please record the adjustment.
+    intent: [stock_discrepancy]
+    records: [PRD-0002]
+    documents: [POL-ADJUST-001, SOP-COUNT-001]
+    approval: {tool: record_stock_adjustment, role: staff, approved_result: done}

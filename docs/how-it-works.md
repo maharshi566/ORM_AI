@@ -1,4 +1,4 @@
-# How ORM_AI works (Phases 0–4)
+# How ORM_AI works (Phases 0–5)
 
 This guide explains what is built so far and how the pieces fit together. Read it
 top to bottom once. After that, use the other guides as references:
@@ -202,7 +202,7 @@ data only ever comes from the tool.
 | --- | --- |
 | A shop sees only its own records | The shop comes from `ToolContext.shop_id` (the logged-in user), never from tool arguments. Another shop's record looks exactly like a missing one. |
 | Agents only get the tools they need | `AGENT_TOOLS` in `registry.py`: the Data agent gets read tools, the Action agent gets action tools, every other agent gets none. |
-| Consequential actions need a person | Action tools check `ToolContext.approval`. Only the human-approval step (Phase 5) can set it. Thresholds come from the approval matrix: orders over Rs 10,000 need the owner, and so on. |
+| Consequential actions need a person | Action tools check `ToolContext.approval`. Only the Action agent sets it, from a decision recorded by the approval API (Phase 5). Thresholds come from the approval matrix: orders over Rs 10,000 need the owner, and so on. |
 | Nothing happens twice | Every action carries an `idempotency_key`. Repeating a key returns the first result (`replayed: true`) instead of acting again. |
 
 ### Mock external APIs
@@ -296,13 +296,14 @@ What this project does about it:
 what is asked; the supervisor sends it to the specialists it needs (records, rules, an
 investigation); the response agent writes the reply; the validator checks it before
 it goes out. Models only ever *ask* for tools and *propose* actions: code runs the
-tools, checks every ID and citation, and (until Phase 5) runs no action at all.
+tools, checks every ID and citation, and runs an action only after a person approved it
+(Phase 5: the policy gate, a pause with `interrupt()`, `POST /api/approval/{workflow_id}`,
+then the Action agent). See [agents.md](agents.md#9-approvals-actions-and-guardrails-phase-5).
 Everything is explained, with diagrams, in [agents.md](agents.md).
 
 ## 9. What comes next
 
 | Phase | Builds on | Adds |
 | --- | --- | --- |
-| 5 Approval | `ApprovalGrant`, the `human_review` node, the checkpointer, `approvals` and `audit_logs` | Policy gate, pause/resume with `interrupt()`, the Action agent, guardrails |
-| 6 API | `POST /api/chat`, the agent events (`AgentDeps.on_event`) | All endpoints, a live progress stream, rate limits, uploads |
-| 7 Frontend | the chat response (sources, steps, proposed actions) | Chat, workflow, sources, approval and admin pages |
+| 6 API | `POST /api/chat`, `POST /api/approval`, the agent events (`AgentDeps.on_event`) | All endpoints, login instead of `user_id`, a live progress stream, rate limits, uploads |
+| 7 Frontend | the chat response (sources, steps, the `approval` block) | Chat, workflow, sources, approval (Approve / Reject / Modify buttons) and admin pages |

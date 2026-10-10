@@ -7,10 +7,14 @@ waits for approval, and the citations used.
 
 Two things are decided by code, not by the model:
 
-* **Completed actions.** Only an action tool's success counts. Phase 4 runs no
-  action tools, so the reply never lists anything as done.
-* **Pending approval.** Taken from the validated proposed actions in the state. The
-  model may word them, but cannot add or remove one.
+* **Completed actions.** Only an action tool's success counts: the list comes from
+  the action agent's results, never from the model's wording.
+* **Pending approval.** Taken from the actions still waiting for a person. The model
+  may word them, but cannot add or remove one.
+
+The model is told exactly what happened to each proposed action: done (with the
+tool's result), rejected, refused by a tool (with its reason), not allowed, or still
+waiting.
 
 When the validator sends the draft back (RETRY), its feedback is included and the
 model rewrites the reply.
@@ -42,6 +46,38 @@ def describe_action(action: dict[str, Any]) -> str:
     return f"{action['tool']} ({shown}): {action['reason']}"
 
 
+WAITING = frozenset({"proposed", "awaiting_approval", "needs_owner"})
+SECTIONS = (
+    ("done", "Done (the shop system confirmed it)"),
+    ("failed", "NOT done: approved, but the tool refused or failed"),
+    ("rejected", "NOT done: the shopkeeper rejected it"),
+    ("blocked", "NOT done: not allowed"),
+    ("approved", "NOT done: approved but not carried out"),
+    ("modified", "NOT done: approved but not carried out"),
+)
+
+
+def describe_result(action: dict[str, Any]) -> str:
+    """'send_payment_reminder (customer_id=CUST-0004): <what the tool said>'."""
+    arguments = {k: v for k, v in action["arguments"].items() if k != "idempotency_key"}
+    shown = ", ".join(f"{k}={v}" for k, v in arguments.items())
+    return f"{action['tool']} ({shown}): {action.get('result') or action['reason']}"
+
+
+def actions_section(actions: list[dict[str, Any]]) -> str:
+    if not actions:
+        return "Proposed actions: none. Nothing has been done or changed."
+    parts = []
+    for status, title in SECTIONS:
+        group = [describe_result(a) for a in actions if a.get("status") == status]
+        if group:
+            parts.append(f"{title}:\n- " + "\n- ".join(group))
+    waiting = [describe_action(a) for a in actions if a.get("status") in WAITING]
+    if waiting:
+        parts.append("Waiting for approval (NOT done):\n- " + "\n- ".join(waiting))
+    return "Actions:\n" + "\n\n".join(parts)
+
+
 def _task(state: dict[str, Any], deps: AgentDeps) -> str:
     parts = [request_header(state, deps.now), render_records(state), render_passages(state)]
     investigation = state.get("investigation_result")
@@ -53,13 +89,7 @@ def _task(state: dict[str, Any], deps: AgentDeps) -> str:
         }
         shown["recommended_action"] = investigation.get("recommended_action")
         parts.append(f"<investigation>\n{compact(shown, 5000)}\n</investigation>")
-    actions = state.get("proposed_actions") or []
-    parts.append(
-        "Proposed actions (NOT done; waiting for approval):\n- "
-        + "\n- ".join(describe_action(a) for a in actions)
-        if actions
-        else "Proposed actions: none. Nothing has been done or changed."
-    )
+    parts.append(actions_section(state.get("proposed_actions") or []))
     problems = (state.get("errors") or []) + (state.get("warnings") or [])
     if problems:
         parts.append("Problems while gathering evidence:\n- " + "\n- ".join(problems[-8:]))
@@ -82,11 +112,13 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
     )
     draft = reply.value.model_dump()
     actions = state.get("proposed_actions") or []
-    if not actions:
+    waiting = [a for a in actions if a.get("status") in WAITING]
+    if not waiting:
         draft["pending_approval"] = []
-    elif len(draft["pending_approval"]) != len(actions):
-        draft["pending_approval"] = [describe_action(a) for a in actions]
-    draft["completed_actions"] = []  # Phase 5: filled from successful action tool results
+    elif len(draft["pending_approval"]) != len(waiting):
+        draft["pending_approval"] = [describe_action(a) for a in waiting]
+    # Only what a tool confirmed counts as done, in code, whatever the model wrote.
+    draft["completed_actions"] = [describe_result(a) for a in actions if a.get("status") == "done"]
     update: dict[str, Any] = {"draft_response": draft, "completed_steps": [AGENT]}
     if retry:
         update["response_retries"] = (state.get("response_retries") or 0) + 1
@@ -94,6 +126,7 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
     return AgentOutcome(
         update=update,
         summary=f"{'rewrote' if retry else 'wrote'} the reply: {len(draft['answer'])} "
-        f"characters, {citations} citation(s), {len(draft['pending_approval'])} pending",
+        f"characters, {citations} citation(s), {len(draft['pending_approval'])} pending, "
+        f"{len(draft['completed_actions'])} done",
         usage=reply.usage,
     )

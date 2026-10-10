@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     checkpointer: Literal["database", "memory"] = "database"
     agent_max_loops: int = 2  # "need more data" and "rewrite the answer" loops, each
     agent_max_tool_calls: int = 8  # per data-retrieval visit
+    # Phase 5: after its checks in code pass, the validator also asks the fast model
+    # whether every claim is supported (one more call per reply). Off by default.
+    validator_llm_judge: bool = False
     session_memory_turns: int = 10  # earlier messages the agents see
     session_ttl_hours: int = 24  # how long Redis keeps a quiet conversation
 

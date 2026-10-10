@@ -90,7 +90,7 @@ def test_a_conversation_continues_with_its_session_id(chat_client) -> None:
     assert second["workflow_id"] != first["workflow_id"]
 
 
-def test_proposed_actions_are_shown_but_not_done(chat_client) -> None:
+def test_proposed_actions_pause_for_approval_and_are_not_done(chat_client) -> None:
     response = chat_client.post(
         "/api/chat",
         json={
@@ -101,10 +101,13 @@ def test_proposed_actions_are_shown_but_not_done(chat_client) -> None:
 
     body = response.json()
     [action] = body["proposed_actions"]
+    assert body["status"] == "awaiting_approval"
     assert action["tool"] == "follow_up_supplier" and action["status"] == "awaiting_approval"
+    assert action["required_role"] == "staff" and action["approval_id"]
     assert "idempotency_key" not in action["arguments"]
     assert body["details"]["completed_actions"] == []
-    assert body["details"]["pending_approval"]
+    assert body["approval"]["actions"][0]["approval_id"] == action["approval_id"]
+    assert "Nothing has been changed yet" in body["answer"]
 
 
 def test_unknown_shops_users_and_other_shops_conversations_are_refused(

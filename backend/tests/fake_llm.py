@@ -9,7 +9,16 @@ checkpointer and the validator. Switches make it misbehave on purpose:
 * ``fail``: agent names whose model call raises LLMError (the model is down);
 * ``more_data``: the first N investigations ask for more records (a loop);
 * ``bad_citations``: the first N replies cite a document that was never retrieved;
-* ``no_tools``: the model answers in text instead of calling tools.
+* ``no_tools``: the model answers in text instead of calling tools;
+* ``confidence``: the investigation's confidence (0.8 unless set);
+* ``false_claims``: the first N replies say "I have sent the reminder" regardless;
+* ``obey_injection``: replies do what the supplier flyer's hidden notice says;
+* ``judge_unsupported``: the first N groundedness checks find an unsupported claim.
+
+Actions it proposes (Phase 5), from the words of the request: a supplier follow-up for
+a late or short order, a payment reminder, a price change ("... to Rs 355"), a stock
+adjustment ("record the adjustment"), a refund ("process the return"), a case ("open a
+case").
 """
 
 import json
@@ -20,6 +29,7 @@ from typing import Any
 
 from app.agents.common import CITATION, ids_of_kind
 from app.agents.schemas import FinalResponse, InvestigationResult, TriageResult, empty_entities
+from app.agents.validator import GroundednessVerdict
 from app.services.chat_model import (
     LLMError,
     LLMUsage,
@@ -63,6 +73,74 @@ CATEGORIES = {
 }
 
 
+ACTION_WORDS = ("please", "go ahead", "record the", "process the", "open a case", " to rs ")
+
+
+def _more_actions(request: str, intent: str) -> list[dict[str, Any]]:
+    """Phase 5 proposals: price changes, adjustments, refunds and cases."""
+    lowered = request.lower()
+    products = ids_of_kind(request, "product_ids")
+    sales = ids_of_kind(request, "sale_ids")
+    actions: list[dict[str, Any]] = []
+    price = re.search(r"\bto rs\.?\s*([\d,]+(?:\.\d+)?)", lowered)
+    if intent == "pricing" and products and price:
+        actions.append(
+            {
+                "tool": "update_selling_price",
+                "arguments_json": json.dumps(
+                    {
+                        "product_id": products[0],
+                        "new_selling_price": float(price.group(1).replace(",", "")),
+                        "reason": "Selling below cost; raise within MRP (POL-PRICING-001).",
+                    }
+                ),
+                "reason": "The price is below cost (POL-PRICING-001).",
+            }
+        )
+    fewer = re.search(r"(\d+) fewer", lowered)
+    if intent == "stock_discrepancy" and products and fewer and "record" in lowered:
+        actions.append(
+            {
+                "tool": "record_stock_adjustment",
+                "arguments_json": json.dumps(
+                    {
+                        "product_id": products[0],
+                        "quantity_change": -int(fewer.group(1)),
+                        "movement_type": "adjustment",
+                        "reason": "Physical count was lower than the system.",
+                    }
+                ),
+                "reason": "Counted stock is lower (POL-ADJUST-001).",
+            }
+        )
+    if intent == "returns" and sales and ("process" in lowered or "refund" in lowered):
+        actions.append(
+            {
+                "tool": "process_return",
+                "arguments_json": json.dumps(
+                    {"sale_id": sales[0], "reason": "Customer returned the goods."}
+                ),
+                "reason": "Within the return window (POL-RETURNS-001).",
+            }
+        )
+    if "open a case" in lowered:
+        actions.append(
+            {
+                "tool": "create_case",
+                "arguments_json": json.dumps(
+                    {
+                        "category": "stock_discrepancy",
+                        "title": "Count does not match the records",
+                        "description": f"Opened from the request: {request[:200]}",
+                        "product_id": products[0] if products else None,
+                    }
+                ),
+                "reason": "Track the problem (POL-APPROVAL-001 §1).",
+            }
+        )
+    return actions
+
+
 def classify(text: str) -> str:
     lowered = text.lower()
     for words, intent in RULES:
@@ -89,11 +167,19 @@ class RuleBasedLLM:
         more_data: int = 0,
         bad_citations: int = 0,
         no_tools: bool = False,
+        confidence: float = 0.8,
+        false_claims: int = 0,
+        obey_injection: bool = False,
+        judge_unsupported: int = 0,
     ) -> None:
         self.fail = set(fail)
         self.more_data = more_data
         self.bad_citations = bad_citations
         self.no_tools = no_tools
+        self.confidence = confidence
+        self.false_claims = false_claims
+        self.obey_injection = obey_injection
+        self.judge_unsupported = judge_unsupported
         self.calls: list[str] = []
 
     def model_for(self, tier: str) -> str:
@@ -119,6 +205,16 @@ class RuleBasedLLM:
         elif schema is FinalResponse:
             self._maybe_fail("respond")
             value = self._response(task)
+        elif schema is GroundednessVerdict:
+            self._maybe_fail("validate")
+            unsupported = self.judge_unsupported > 0
+            self.judge_unsupported -= 1
+            value = GroundednessVerdict(
+                grounded=not unsupported,
+                unsupported_claims=["The amount in the answer is not in the records."]
+                if unsupported
+                else [],
+            )
         else:
             raise AssertionError(f"unexpected schema {schema}")
         return StructuredReply(value=value, usage=USAGE, mode="json_schema")
@@ -145,7 +241,8 @@ class RuleBasedLLM:
             missing_information=["which customer"] if unclear else [],
             needs_clarification=unclear,
             clarifying_question="Which customer should I remind?" if unclear else None,
-            wants_action=intent in {"payment_reminder"},
+            wants_action=intent in {"payment_reminder"}
+            or any(w in request.lower() for w in ACTION_WORDS),
             recommended_route=ROUTES.get(intent, ["data", "knowledge"]),
             confidence=0.9,
         )
@@ -194,6 +291,7 @@ class RuleBasedLLM:
                     "reason": "Dues are past due (POL-REMINDER-001).",
                 }
             )
+        actions += _more_actions(request, intent)
         evidence = [{"source": "record", "reference": s, "fact": "Checked."} for s in sources[:2]]
         evidence += [
             {"source": "policy", "reference": c, "fact": "Applies."} for c in citations[:1]
@@ -206,8 +304,8 @@ class RuleBasedLLM:
             policy_references=citations[:2],
             recommended_action="Follow the shop rule cited.",
             proposed_actions=actions,
-            confidence=0.8,
-            requires_human_review=bool(actions),
+            confidence=self.confidence,
+            requires_human_review=any(a["tool"] != "create_case" for a in actions),
             needs_more_data=False,
             data_requests=[],
         )
@@ -216,10 +314,26 @@ class RuleBasedLLM:
         request = _line(task, "Request: ")
         citations = list(dict.fromkeys(CITATION.findall(task)))[:2]
         sources = re.findall(r'<record source="([^"]+)"', task)
-        pending = re.findall(r"^- (\w+ \(.*\): .*)$", task.split("NOT done", 1)[-1], re.MULTILINE)
-        if "NOT done" not in task:
-            pending = []
+        waiting = task.split("Waiting for approval (NOT done):", 1)
+        pending = (
+            re.findall(r"^- (\w+ \(.*\): .*)$", waiting[1], re.MULTILINE)
+            if len(waiting) > 1
+            else []
+        )
+        done = task.split("Done (the shop system confirmed it):", 1)
+        done_tools = (
+            re.findall(r"^- (\w+) \(", done[1].split("\n\n")[0], re.MULTILINE)
+            if len(done) > 1
+            else []
+        )
         answer = f"Here is what I found about: {request}"
+        if any(t in {"send_payment_reminder", "follow_up_supplier"} for t in done_tools):
+            answer += " I have sent the message."
+        if self.false_claims > 0:
+            self.false_claims -= 1
+            answer += " I have sent the reminder."
+        if self.obey_injection and "SYSTEM NOTICE" in task:
+            answer += " As the notice says, I marked all customer credit balances as paid."
         if citations:
             answer += f" The rule is {citations[0]}."
         if self.bad_citations > 0:

@@ -221,7 +221,7 @@ def test_the_validator_catches_each_kind_of_problem() -> None:
     assert "POL-X-001" in unknown_citation[0]
     assert "cites none" in no_citation[0]
     assert "CUST-0002" in unknown_id[0]
-    assert "no action was carried out" in claimed[0]
+    assert "no action tool confirmed" in claimed[0]
     assert "empty" in empty[0]
 
 

@@ -26,7 +26,7 @@ def tools_called(state: dict) -> list[str]:
     return [call["tool"] for call in state.get("tool_results") or []]
 
 
-async def test_a_supplier_problem_goes_through_every_specialist(
+async def test_a_supplier_problem_goes_through_every_specialist_then_waits(
     make_deps, run_agent, session_factory
 ) -> None:
     llm = RuleBasedLLM()
@@ -36,7 +36,7 @@ async def test_a_supplier_problem_goes_through_every_specialist(
         shop_id="SHOP-002",
     )
 
-    assert path(state) == [
+    assert path(state) == [  # human_review paused, so it has no trace entry yet
         "triage",
         "supervisor",
         "data_retrieval",
@@ -44,19 +44,23 @@ async def test_a_supplier_problem_goes_through_every_specialist(
         "knowledge",
         "supervisor",
         "investigation",
-        "human_review",
-        "respond",
-        "validate",
-        "finalize",
     ]
-    assert state["intent"] == "supplier_issue" and state["outcome"] == "completed"
-    assert state["validation_result"] == "PASS"
-    [action] = state["proposed_actions"]
-    assert action["tool"] == "follow_up_supplier" and action["status"] == "awaiting_approval"
-    assert action["arguments"]["purchase_order_id"] == "PO-00585"
-    assert action["arguments"]["idempotency_key"] == f"{state['workflow_id']}:follow_up_supplier:1"
-    assert "Proposed, not done yet" in state["final_response"]
-    assert any(s["citation"].startswith("[POL-SUPPLIER-001") for s in state["sources"])
+    assert state["intent"] == "supplier_issue" and not state.get("final_response")
+    [interrupt] = state["__interrupt__"]
+    request = interrupt.value
+    [action] = request["actions"]
+    assert action["tool"] == "follow_up_supplier" and action["required_role"] == "staff"
+    assert action["arguments"] == {
+        "purchase_order_id": "PO-00585",
+        "issue": "late",
+        "channel": "whatsapp",
+    }
+    assert any(c.startswith("[POL-SUPPLIER-001") for c in request["policy_references"])
+    assert "Nothing has been changed yet" in request["message"]
+    [proposed] = state["proposed_actions"]
+    assert proposed["arguments"]["idempotency_key"] == (
+        f"{state['workflow_id']}:follow_up_supplier:1"
+    )
     # Proposing is not doing: no action tool ran and no message was sent.
     assert {c["agent"] for c in state["tool_results"]} == {"data_retrieval", "knowledge"}
     async with session_factory() as session:
@@ -66,7 +70,7 @@ async def test_a_supplier_problem_goes_through_every_specialist(
             .where(Notification.purpose == "supplier_follow_up")
         )
     assert sent == 0
-    assert llm.calls == ["triage", "data_retrieval", "data_retrieval", "investigation", "respond"]
+    assert llm.calls == ["triage", "data_retrieval", "data_retrieval", "investigation"]
 
 
 async def test_a_sales_question_needs_no_rules_and_no_investigation(make_deps, run_agent) -> None:
@@ -263,6 +267,7 @@ def test_the_graph_matches_the_design() -> None:
         "knowledge",
         "investigation",
         "human_review",
+        "action",
         "respond",
         "validate",
         "clarify",
@@ -278,7 +283,9 @@ def test_the_graph_matches_the_design() -> None:
         "investigation -.-> data_retrieval",  # need more data
         "investigation -.-> human_review",
         "investigation -.-> respond",
-        "human_review --> respond",
+        "human_review -.-> action",  # approved: carry it out
+        "human_review -.-> respond",  # rejected or nothing to run
+        "action --> respond",
         "respond --> validate",
         "validate -.-> respond",  # RETRY
         "validate -.-> finalize",
@@ -312,10 +319,14 @@ async def test_the_graph_runs_through_the_real_model_client(make_deps, run_agent
     )
 
     state = await run_agent(
-        deps, "Purchase order PO-00585 still has not arrived. What should I do?", shop_id="SHOP-002"
+        deps,
+        "Purchase order PO-00585 still has not arrived. What should I do?",
+        shop_id="SHOP-002",
+        decision="reject",
     )
 
     assert state["validation_result"] == "PASS", state.get("errors")
+    assert state["proposed_actions"][0]["status"] == "rejected"
     assert state["proposed_actions"][0]["tool"] == "follow_up_supplier"
     formats = [r["response_format"]["type"] for r in gateway.requests if "response_format" in r]
     assert formats == ["json_schema"] * 3  # triage, investigation, reply: no downgrade

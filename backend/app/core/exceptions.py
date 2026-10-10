@@ -51,6 +51,20 @@ class ForbiddenError(AppError):
     code = "forbidden"
 
 
+class ConflictError(AppError):
+    """The request is valid but does not fit the record's state (e.g. already decided)."""
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "conflict"
+
+
+class InvalidRequestError(AppError):
+    """The request is well-formed JSON but asks for something that cannot be done."""
+
+    status_code = 422
+    code = "invalid_request"
+
+
 class DependencyUnavailableError(AppError):
     """A database, cache, vector store, LLM or external API is down."""
 

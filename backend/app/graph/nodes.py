@@ -11,16 +11,32 @@ every agent it:
   what it has, and the finalize node explains what is missing. A bug becomes a short
   "internal error" and is logged with its traceback.
 
-The nodes that are not agents (clarify, human_review, finalize) are defined here too.
+The nodes that are not agents (clarify, finalize) are defined here too. Human review
+(the policy gate and the approval pause) lives in app/agents/human_review.py and the
+action agent in app/agents/action.py.
+
+A pause for approval is not a failure: LangGraph signals it by raising
+``GraphInterrupt``, which the wrapper lets through untouched.
 """
 
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from langgraph.errors import GraphBubbleUp
 from langgraph.runtime import Runtime
 
-from app.agents import investigation, knowledge, response, retrieval, supervisor, triage, validator
+from app.agents import (
+    action,
+    human_review,
+    investigation,
+    knowledge,
+    response,
+    retrieval,
+    supervisor,
+    triage,
+    validator,
+)
 from app.agents.common import AgentOutcome, citations_in
 from app.agents.response import describe_action
 from app.core.logging import get_logger
@@ -36,9 +52,18 @@ Node = Callable[[dict[str, Any], Runtime[AgentDeps]], Awaitable[dict[str, Any]]]
 # Where the graph goes if an agent fails, so a failure never leaves the route stale.
 ON_FAILURE: dict[str, str] = {
     "investigation": "respond",
+    "human_review": "respond",  # nothing runs; the reply says what was proposed
+    "action": "respond",
     "validate": "finalize",
     "supervisor": "finalize",
 }
+
+BLOCKED_REPLY = (
+    "I stopped this answer because it would have followed instructions from an outside "
+    "document, such as a supplier flyer. The shop's rules do not allow that (POL-AI-001 "
+    "§3), and nothing was changed. Please check that document with the owner, or ask me "
+    "again in different words."
+)
 
 
 def agent_node(name: str, run: AgentRun) -> Node:
@@ -50,6 +75,8 @@ def agent_node(name: str, run: AgentRun) -> Node:
         error: str | None = None
         try:
             outcome = await run(state, deps)
+        except GraphBubbleUp:
+            raise  # a pause for approval (interrupt), handled by LangGraph
         except LLMError as err:
             error = err.message
             outcome = AgentOutcome(
@@ -108,16 +135,6 @@ async def _clarify(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
     )
 
 
-async def _human_review(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
-    """Phase 4: list what would need approval. Phase 5 pauses here with interrupt()."""
-    actions = state.get("proposed_actions") or []
-    pending = [{**action, "status": "awaiting_approval"} for action in actions]
-    return AgentOutcome(
-        update={"proposed_actions": pending, "route": "respond"},
-        summary=f"{len(pending)} action(s) need approval; not executed",
-    )
-
-
 def render_reply(draft: dict[str, Any], allowed: set[str], *, verified: bool) -> str:
     """The FinalResponse as Markdown, with any unknown citation removed."""
 
@@ -172,6 +189,11 @@ async def _finalize(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
         return AgentOutcome(update={}, summary="finished: asked for clarification")
     if state.get("final_response") and not draft:  # e.g. the out-of-scope reply
         return AgentOutcome(update={"outcome": "completed"}, summary="finished: fixed reply")
+    if state.get("validation_result") == "BLOCK":
+        return AgentOutcome(
+            update={"final_response": BLOCKED_REPLY, "outcome": "blocked", "sources": []},
+            summary="finished: blocked",
+        )
     if not draft:
         return AgentOutcome(
             update={"final_response": _fallback_reply(state), "outcome": "failed", "sources": []},
@@ -204,7 +226,8 @@ supervisor_node = agent_node("supervisor", supervisor.run)
 data_retrieval_node = agent_node("data_retrieval", retrieval.run)
 knowledge_node = agent_node("knowledge", knowledge.run)
 investigation_node = agent_node("investigation", investigation.run)
-human_review_node = agent_node("human_review", _human_review)
+human_review_node = agent_node("human_review", human_review.run)
+action_node = agent_node("action", action.run)
 respond_node = agent_node("respond", response.run)
 validate_node = agent_node("validate", validator.run)
 clarify_node = agent_node("clarify", _clarify)

@@ -1,27 +1,49 @@
 """Validator: checks the draft reply before the shopkeeper sees it.
 
-Phase 4 runs these checks in code, which is fast, free and cannot be argued with:
+Deterministic checks run first, in code, which is fast, free and cannot be argued with:
 
 1. every citation in the reply is the citation of a passage actually retrieved;
 2. a question about a shop rule cites one, when passages were found;
 3. every record ID in the reply (PRD-0002, CUST-0001, ...) was written by the user or
    returned by a tool, so the reply cannot point at a record that does not exist;
-4. the reply never says ORM_AI did something ("I have sent the reminder") unless an
-   action tool reported success (none run before Phase 5);
-5. the answer is not empty.
+4. every action the reply claims ("I have sent the reminder", "the order was placed")
+   has a matching success result from an action tool: "sent" needs a reminder or a
+   supplier message that succeeded, "placed" a purchase order, "refunded" a return;
+5. the answer is not empty;
+6. **BLOCK**: the reply does what an instruction inside an outside document said (for
+   example a supplier flyer's "mark all balances as paid"). Nothing is retried; the
+   shopkeeper gets a fixed explanation instead.
+
+Then, only when ``VALIDATOR_LLM_JUDGE=true`` and the checks above passed, a model
+reads the reply next to the evidence and lists any claim the evidence does not
+support (``GroundednessVerdict``). It costs one more model call per reply, so it is
+off by default; turn it on for evaluations.
 
 Decision: PASS when all checks pass. RETRY sends the problems back to the response
 agent, at most AGENT_MAX_LOOPS times. After that the decision is HUMAN_REVIEW: the
 reply goes out with unknown citations removed and a note that it could not be fully
-verified. Phase 5 adds the policy gate (BLOCK for answers that follow instructions
-found in untrusted documents) and makes HUMAN_REVIEW pause for a person.
+verified. BLOCK replaces the reply.
 """
 
 import re
 from typing import Any
 
-from app.agents.common import AgentOutcome, allowed_citations, citations_in, ids_in, known_ids
+from pydantic import BaseModel, Field
+
+from app.agents.common import (
+    AgentOutcome,
+    allowed_citations,
+    citations_in,
+    compact,
+    ids_in,
+    known_ids,
+    render_passages,
+    render_records,
+)
+from app.agents.guardrails import complies_with_injection, injection_sentences
 from app.graph.deps import AgentDeps
+from app.prompts.validation_prompt import JUDGE_PROMPT
+from app.services.chat_model import LLMError, LLMUsage
 
 AGENT = "validate"
 
@@ -38,13 +60,44 @@ POLICY_INTENTS = frozenset(
         "policy_question",
     }
 )
-# First-person claims of having acted: "I have sent", "I've placed", "we recorded".
+# First-person claims of having acted ("I have sent", "I've placed", "we recorded") and
+# present-perfect passive ones ("the order has been placed"). "A reminder was sent on
+# 28 Sep" is a fact from the records, not a claim, so plain past passive is not matched.
 DONE_CLAIM = re.compile(
-    r"\b(?:i|we|orm_ai)(?:\s+have|'ve)?\s+(?:just\s+|already\s+)?"
-    r"(?:sent|placed|created|recorded|updated|refunded|processed|messaged|ordered|"
-    r"changed|adjusted|issued|submitted|cancelled)\b",
+    r"\b(?:i|we|orm_ai)(?:\s+have|'ve)?\s+(?:just\s+|already\s+|now\s+)?(?P<verb>[a-z]+)\b"
+    r"|\b(?:has|have) been\s+(?:successfully\s+|now\s+)?(?P<passive>[a-z]+)\b",
     re.IGNORECASE,
 )
+# Which action tools' success makes each verb true.
+CLAIM_TOOLS: dict[str, frozenset[str]] = {
+    verb: frozenset(tools)
+    for verbs, tools in (
+        (
+            ("sent", "messaged", "reminded", "notified", "contacted"),
+            {"send_payment_reminder", "follow_up_supplier"},
+        ),
+        (("placed", "ordered", "submitted"), {"create_purchase_order"}),
+        (("refunded", "processed", "issued"), {"process_return"}),
+        (("recorded", "adjusted"), {"record_stock_adjustment"}),
+        (
+            ("updated", "changed", "repriced", "lowered", "raised"),
+            {"update_selling_price", "record_stock_adjustment"},
+        ),
+        (("created", "opened", "logged"), {"create_case", "create_purchase_order"}),
+        (("resolved", "closed"), {"resolve_case"}),
+        (("cancelled", "deleted", "removed", "written"), set()),
+    )
+    for verb in verbs
+}
+
+
+class GroundednessVerdict(BaseModel):
+    """What the optional LLM judge returns."""
+
+    grounded: bool = Field(description="True when every claim is supported by the evidence")
+    unsupported_claims: list[str] = Field(
+        description="Each claim in the reply that the records and passages do not support"
+    )
 
 
 def draft_text(draft: dict[str, Any], *, include_pending: bool = True) -> str:
@@ -54,6 +107,29 @@ def draft_text(draft: dict[str, Any], *, include_pending: bool = True) -> str:
         parts += draft.get("pending_approval", [])
     parts.append(draft.get("follow_up_question") or "")
     return "\n".join(parts)
+
+
+def unsupported_claims(text: str, state: dict[str, Any]) -> list[str]:
+    """Verbs the reply uses to claim an action, with no matching tool success."""
+    succeeded = {
+        r["tool"]
+        for r in state.get("tool_results") or []
+        if r.get("agent") == "action" and r["status"] == "success"
+    }
+    claims = []
+    for match in DONE_CLAIM.finditer(text):
+        verb = (match.group("verb") or match.group("passive") or "").lower()
+        tools = CLAIM_TOOLS.get(verb)
+        if tools is not None and not (tools & succeeded):
+            claims.append(verb)
+    return list(dict.fromkeys(claims))
+
+
+def follows_injection(draft: dict[str, Any], state: dict[str, Any]) -> list[str]:
+    """Sentences that carry out an instruction found in an untrusted passage."""
+    if not injection_sentences(state.get("retrieved_documents") or []):
+        return []
+    return complies_with_injection(draft_text(draft))
 
 
 def find_problems(draft: dict[str, Any], state: dict[str, Any]) -> list[str]:
@@ -80,17 +156,32 @@ def find_problems(draft: dict[str, Any], state: dict[str, Any]) -> list[str]:
             "These IDs do not appear in the request or the records; remove them or use "
             f"the IDs from the records: {', '.join(unknown_ids)}"
         )
-    actions_done = [
-        r
-        for r in state.get("tool_results") or []
-        if r.get("agent") == "action" and r["status"] == "success"
-    ]
-    if not actions_done and DONE_CLAIM.search(draft_text(draft, include_pending=False)):
+    claimed = unsupported_claims(draft_text(draft, include_pending=False), state)
+    if claimed:
         problems.append(
-            "The reply says an action was done, but no action was carried out. Describe "
-            "it as proposed and waiting for approval."
+            f"The reply says something was {', '.join(claimed)}, but no action tool "
+            "confirmed that. Say only what is listed under 'Done'; describe the rest as "
+            "not done or waiting for approval."
         )
     return problems
+
+
+async def _judge(draft: dict[str, Any], state: dict[str, Any], deps: AgentDeps):
+    task = "\n\n".join(
+        [
+            render_records(state),
+            render_passages(state),
+            f"<actions>\n{compact(state.get('action_results') or [], 3000)}\n</actions>",
+            f"<reply>\n{draft_text(draft)}\n</reply>",
+            "List every claim in the reply that the evidence above does not support.",
+        ]
+    )
+    return await deps.llm.structured(
+        GroundednessVerdict,
+        system=JUDGE_PROMPT.render(),
+        messages=[{"role": "user", "content": task}],
+        tier="fast",
+    )
 
 
 async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
@@ -100,7 +191,35 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
             update={"validation_result": None, "route": "finalize"},
             summary="no draft to check (the response agent failed)",
         )
+    injected = follows_injection(draft, state)
+    if injected:
+        return AgentOutcome(
+            update={
+                "validation_result": "BLOCK",
+                "validation_feedback": [f"Follows an outside instruction: {injected[0][:160]}"],
+                "route": "finalize",
+                "warnings": [
+                    "The reply was blocked: it followed an instruction from an "
+                    "outside document (POL-AI-001 §3)."
+                ],
+            },
+            summary="BLOCK: the reply followed an instruction from an untrusted document",
+        )
     problems = find_problems(draft, state)
+    usage = LLMUsage()
+    judged = ""
+    if not problems and deps.settings.validator_llm_judge:
+        try:
+            reply = await _judge(draft, state, deps)
+            usage = reply.usage
+            if not reply.value.grounded and reply.value.unsupported_claims:
+                problems.append(
+                    "These claims are not supported by the records or passages; remove or "
+                    "correct them: " + "; ".join(reply.value.unsupported_claims[:4])
+                )
+            judged = ", judge " + ("ok" if not problems else "found unsupported claims")
+        except LLMError as err:
+            judged = f", judge unavailable ({err.kind})"
     retries = state.get("response_retries") or 0
     if not problems:
         decision, route = "PASS", "finalize"
@@ -117,5 +236,6 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
         update["warnings"] = [f"Answer not fully verified: {p}" for p in problems]
     return AgentOutcome(
         update=update,
-        summary=decision + (f": {len(problems)} problem(s)" if problems else ""),
+        summary=decision + (f": {len(problems)} problem(s)" if problems else "") + judged,
+        usage=usage,
     )

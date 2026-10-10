@@ -21,12 +21,16 @@ AFTER_SUPERVISOR = {
 }
 AFTER_INVESTIGATION = {  # the decision node
     "data_retrieval": "data_retrieval",  # need more data (at most AGENT_MAX_LOOPS times)
-    "human_review": "human_review",  # actions or doubts: a person decides (Phase 5)
+    "human_review": "human_review",  # actions or doubts: the policy gate and a person
     "respond": "respond",  # enough to answer
+}
+AFTER_REVIEW = {
+    "action": "action",  # approved (or low-risk) actions to carry out
+    "respond": "respond",  # everything rejected, blocked or nothing to run
 }
 AFTER_VALIDATION = {
     "respond": "respond",  # RETRY: rewrite with the validator's feedback
-    "finalize": "finalize",  # PASS, or out of retries
+    "finalize": "finalize",  # PASS, BLOCK, or out of retries (HUMAN_REVIEW)
 }
 
 
@@ -41,6 +45,10 @@ def after_supervisor(state: dict[str, Any]) -> str:
 
 def after_investigation(state: dict[str, Any]) -> str:
     return _route(state, AFTER_INVESTIGATION, "respond")
+
+
+def after_review(state: dict[str, Any]) -> str:
+    return _route(state, AFTER_REVIEW, "respond")
 
 
 def after_validation(state: dict[str, Any]) -> str:

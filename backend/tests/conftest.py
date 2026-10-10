@@ -242,12 +242,51 @@ def make_deps(session_factory, registry, knowledge):
     return factory
 
 
+def decision_for(
+    request: dict,
+    decision: str = "approve",
+    *,
+    user: str = "USR-001",
+    role: str = "owner",
+    arguments: dict | None = None,
+    note: str | None = None,
+) -> dict:
+    """The resume value the approval API would send: one decision for every action."""
+    return {
+        "decided_by": user,
+        "role": role,
+        "note": note,
+        "decided_at": "2026-09-30T12:05:00+05:30",
+        "decisions": {
+            action["action_id"]: {
+                "decision": decision,
+                "arguments": arguments,
+                "approval_id": action["approval_id"],
+            }
+            for action in request["actions"]
+        },
+    }
+
+
+def approval_request(state: dict) -> dict | None:
+    """The approval request when the run paused, else None."""
+    for item in state.get("__interrupt__") or []:
+        return item.value
+    return None
+
+
 @pytest.fixture
 def run_agent():
-    """Run the whole graph once and return the final state."""
+    """Run the whole graph and return the final state.
+
+    If the run pauses for approval and ``decision`` is given ("approve", "reject" or
+    "modify"), it is resumed with that decision for every waiting action, as the
+    approval API would do; otherwise the paused state (with ``__interrupt__``) returns.
+    """
     import uuid
 
     from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
 
     from app.graph.workflow import RECURSION_LIMIT, compile_graph
 
@@ -259,6 +298,10 @@ def run_agent():
         history: list[dict] | None = None,
         checkpointer=None,
         workflow_id: str | None = None,
+        decision: str | None = None,
+        user: str = "USR-001",
+        role: str = "owner",
+        arguments: dict | None = None,
     ) -> dict:
         workflow_id = workflow_id or str(uuid.uuid4())
         graph = compile_graph(checkpointer or InMemorySaver())
@@ -271,6 +314,11 @@ def run_agent():
             "conversation_history": history or [],
         }
         config = {"configurable": {"thread_id": workflow_id}, "recursion_limit": RECURSION_LIMIT}
-        return await graph.ainvoke(state, config=config, context=deps)
+        result = await graph.ainvoke(state, config=config, context=deps)
+        request = approval_request(result)
+        if request is None or decision is None:
+            return result
+        value = decision_for(request, decision, user=user, role=role, arguments=arguments)
+        return await graph.ainvoke(Command(resume=value), config=config, context=deps)
 
     return runner

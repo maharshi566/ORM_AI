@@ -13,6 +13,11 @@
    shows: the answer, its sources, the proposed actions, every tool call and every
    agent step with its model, time and tokens.
 
+When an action needs a person, the graph pauses (Phase 5). The reply then has status
+``awaiting_approval`` and an ``approval`` block saying what to decide; the workflow row
+stays ``awaiting_approval`` until ``POST /api/approval/{workflow_id}`` resumes it
+(app/services/approval_service.py, which reuses the helpers below).
+
 The pieces that are expensive to build (the model client, the compiled graph, the
 knowledge retriever) are built once, on the first chat request, by ``get_agent_runtime``.
 """
@@ -33,6 +38,7 @@ from app.graph.workflow import RECURSION_LIMIT, compile_graph, make_checkpointer
 from app.models import ChatSession, Shop, User, Workflow
 from app.models.schemas import (
     AgentStep,
+    ApprovalRequestView,
     ChatRequest,
     ChatResponse,
     ProposedActionView,
@@ -118,6 +124,82 @@ async def _build_runtime(app: FastAPI) -> AgentRuntime:
     )
 
 
+def make_deps(rt: AgentRuntime) -> AgentDeps:
+    return AgentDeps(
+        settings=rt.settings,
+        llm=rt.llm,
+        registry=rt.registry,
+        session_factory=rt.session_factory,
+        now=business_now(rt.settings.business_date),
+        knowledge=rt.knowledge,
+        clients=rt.clients,
+    )
+
+
+def graph_config(workflow_id: str, session_id: str, shop_id: str) -> dict[str, Any]:
+    return {
+        "configurable": {"thread_id": workflow_id},
+        "recursion_limit": RECURSION_LIMIT,
+        "run_name": "orm_ai_chat",
+        "tags": [shop_id],
+        "metadata": {"workflow_id": workflow_id, "session_id": session_id},
+    }
+
+
+async def run_graph(
+    rt: AgentRuntime, payload: Any, config: dict[str, Any], deps: AgentDeps, base: dict[str, Any]
+) -> dict[str, Any]:
+    """Run (or resume) the graph. Never raises: a crash becomes a failed outcome."""
+    try:
+        return await rt.graph.ainvoke(payload, config=config, context=deps)
+    except Exception as exc:
+        # Agent failures are handled inside the graph; reaching here means the graph
+        # itself could not run (for example the database went away mid-run).
+        logger.exception("workflow_crashed", workflow_id=config["configurable"]["thread_id"])
+        return {
+            **base,
+            "final_response": FAILED_REPLY,
+            "outcome": "failed",
+            "errors": [f"The workflow stopped ({type(exc).__name__})."],
+        }
+
+
+def paused_request(final: dict[str, Any]) -> dict[str, Any] | None:
+    """The approval request when the run paused for a person, else None."""
+    for item in final.get("__interrupt__") or []:
+        value = getattr(item, "value", item)
+        if isinstance(value, dict) and value.get("type") == "approval_request":
+            return value
+    return None
+
+
+async def close_workflow(rt: AgentRuntime, workflow_id: str, response: ChatResponse) -> None:
+    async with rt.session_factory() as db:
+        workflow = await db.get(Workflow, workflow_id)
+        if workflow is None:
+            return
+        status = {
+            "failed": "failed",
+            "awaiting_approval": "awaiting_approval",
+            "blocked": "blocked",
+        }.get(response.status, "completed")
+        workflow.status = status
+        workflow.intent = response.intent
+        workflow.final_response = response.answer
+        workflow.error = response.errors[0][:2000] if response.errors else None
+        workflow.completed_at = None if status == "awaiting_approval" else utcnow()
+        await db.commit()
+
+
+async def finish(
+    rt: AgentRuntime, final: dict[str, Any], workflow_id: str, session_id: str
+) -> ChatResponse:
+    response = build_response(final, workflow_id, session_id)
+    await close_workflow(rt, workflow_id, response)
+    await rt.memory.append(session_id, "assistant", response.answer, workflow_id=workflow_id)
+    return response
+
+
 class ChatService:
     def __init__(self, runtime: AgentRuntime) -> None:
         self.rt = runtime
@@ -165,15 +247,7 @@ class ChatService:
         history = await self.rt.memory.recent(session_id)
         await self.rt.memory.append(session_id, "user", request.message, workflow_id=workflow_id)
 
-        deps = AgentDeps(
-            settings=self.rt.settings,
-            llm=self.rt.llm,
-            registry=self.rt.registry,
-            session_factory=self.rt.session_factory,
-            now=business_now(self.rt.settings.business_date),
-            knowledge=self.rt.knowledge,
-            clients=self.rt.clients,
-        )
+        deps = make_deps(self.rt)
         initial = {
             "workflow_id": workflow_id,
             "session_id": session_id,
@@ -182,58 +256,76 @@ class ChatService:
             "user_query": request.message,
             "conversation_history": [{"role": m["role"], "content": m["content"]} for m in history],
         }
-        config = {
-            "configurable": {"thread_id": workflow_id},
-            "recursion_limit": RECURSION_LIMIT,
-            "run_name": "orm_ai_chat",
-            "tags": [request.shop_id],
-            "metadata": {"workflow_id": workflow_id, "session_id": session_id},
-        }
-        try:
-            final: dict[str, Any] = await self.rt.graph.ainvoke(
-                initial, config=config, context=deps
+        config = graph_config(workflow_id, session_id, request.shop_id)
+        final = await run_graph(self.rt, initial, config, deps, initial)
+        return await finish(self.rt, final, workflow_id, session_id)
+
+
+def _action_views(
+    final: dict[str, Any], request: dict[str, Any] | None
+) -> list[ProposedActionView]:
+    if request is not None:  # paused: the node's update is not in the state yet
+        return [
+            ProposedActionView(
+                action_id=a["action_id"],
+                tool=a["tool"],
+                arguments=a["arguments"],
+                reason=a["reason"],
+                status="awaiting_approval",
+                required_role=a["required_role"],
+                approval_id=a["approval_id"],
             )
-        except Exception as exc:
-            # Agent failures are handled inside the graph; reaching here means the graph
-            # itself could not run (for example the database went away mid-run).
-            logger.exception("workflow_crashed", workflow_id=workflow_id)
-            final = {
-                **initial,
-                "final_response": FAILED_REPLY,
-                "outcome": "failed",
-                "errors": [f"The workflow stopped ({type(exc).__name__})."],
-            }
-
-        response = build_response(final, workflow_id, session_id)
-        await self._close_workflow(workflow_id, response)
-        await self.rt.memory.append(
-            session_id, "assistant", response.answer, workflow_id=workflow_id
+            for a in request["actions"]
+        ]
+    return [
+        ProposedActionView(
+            action_id=a.get("action_id"),
+            tool=a["tool"],
+            arguments={k: v for k, v in a["arguments"].items() if k != "idempotency_key"},
+            reason=a["reason"],
+            status=a["status"],
+            required_role=a.get("required_role"),
+            approval_id=a.get("approval_id"),
+            result=a.get("result"),
         )
-        return response
+        for a in final.get("proposed_actions") or []
+    ]
 
-    async def _close_workflow(self, workflow_id: str, response: ChatResponse) -> None:
-        async with self.rt.session_factory() as db:
-            workflow = await db.get(Workflow, workflow_id)
-            if workflow is None:
-                return
-            workflow.status = "failed" if response.status == "failed" else "completed"
-            workflow.intent = response.intent
-            workflow.final_response = response.answer
-            workflow.error = response.errors[0][:2000] if response.errors else None
-            workflow.completed_at = utcnow()
-            await db.commit()
+
+def _paused_sources(final: dict[str, Any], request: dict[str, Any]) -> list[SourceView]:
+    passages = {p["citation"]: p for p in final.get("retrieved_documents") or []}
+    return [
+        SourceView(
+            citation=c,
+            title=passages[c]["title"],
+            section=passages[c]["section"],
+            excerpt=passages[c]["text"][:300],
+            trust=passages[c]["trust"],
+        )
+        for c in request.get("policy_references") or []
+        if c in passages
+    ]
 
 
 def build_response(final: dict[str, Any], workflow_id: str, session_id: str) -> ChatResponse:
     draft = final.get("draft_response") or {}
     trace = final.get("agent_trace") or []
-    actions = final.get("proposed_actions") or []
+    request = paused_request(final)
+    if request is not None:
+        status, answer = "awaiting_approval", request["message"]
+        sources = _paused_sources(final, request)
+        approval: ApprovalRequestView | None = ApprovalRequestView.model_validate(request)
+    else:
+        status = final.get("outcome") or "failed"
+        answer = final.get("final_response") or FAILED_REPLY
+        sources = [SourceView(**source) for source in final.get("sources") or []]
+        approval = None
     return ChatResponse(
         workflow_id=workflow_id,
         session_id=session_id,
-        status=final.get("outcome") or "failed",
+        status=status,
         intent=final.get("intent"),
-        answer=final.get("final_response") or FAILED_REPLY,
+        answer=answer,
         details=ReplyDetails(
             facts=draft.get("facts", []),
             evidence=draft.get("evidence", []),
@@ -242,16 +334,8 @@ def build_response(final: dict[str, Any], workflow_id: str, session_id: str) -> 
             completed_actions=draft.get("completed_actions", []),
             follow_up_question=draft.get("follow_up_question"),
         ),
-        sources=[SourceView(**source) for source in final.get("sources") or []],
-        proposed_actions=[
-            ProposedActionView(
-                tool=a["tool"],
-                arguments={k: v for k, v in a["arguments"].items() if k != "idempotency_key"},
-                reason=a["reason"],
-                status=a["status"],
-            )
-            for a in actions
-        ],
+        sources=sources,
+        proposed_actions=_action_views(final, request),
         tool_calls=[
             ToolActivity(
                 agent=c["agent"],
@@ -284,4 +368,5 @@ def build_response(final: dict[str, Any], workflow_id: str, session_id: str) -> 
         validation=final.get("validation_result"),
         warnings=list(dict.fromkeys(final.get("warnings") or [])),
         errors=list(dict.fromkeys(final.get("errors") or [])),
+        approval=approval,
     )

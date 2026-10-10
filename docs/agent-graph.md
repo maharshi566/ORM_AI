@@ -19,15 +19,18 @@ graph TD;
 	knowledge(knowledge)
 	investigation(investigation)
 	human_review(human_review)
+	action(action)
 	respond(respond)
 	validate(validate)
 	clarify(clarify)
 	finalize(finalize)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> triage;
+	action --> respond;
 	clarify --> finalize;
 	data_retrieval --> supervisor;
-	human_review --> respond;
+	human_review -.-> action;
+	human_review -.-> respond;
 	investigation -.-> data_retrieval;
 	investigation -.-> human_review;
 	investigation -.-> respond;

@@ -12,8 +12,9 @@ Its output is checked in code before anyone relies on it:
 * a finding that mentions an ID no tool returned is dropped;
 * a proposed action must be an action tool whose arguments pass that tool's own
   input validation, and gets an idempotency key tied to this workflow, so a resumed
-  workflow can never perform it twice. Proposed actions are never run here; Phase 5
-  adds the approval step that runs them.
+  workflow can never perform it twice. Proposed actions are never run here: the
+  policy gate and a person decide first (app/agents/human_review.py), and the action
+  agent runs only what was approved.
 
 It decides where the workflow goes next (the "decision node"): back to data retrieval
 when a specific record is missing (at most AGENT_MAX_LOOPS times), to human review
@@ -132,6 +133,7 @@ def check_actions(
             continue
         actions.append(
             {
+                "action_id": f"{proposal.tool}:{index}",
                 "tool": proposal.tool,
                 "arguments": checked,
                 "reason": proposal.reason,

@@ -4,6 +4,11 @@ Every log line carries the context bound for the current request (``request_id``
 now; ``workflow_id``, ``session_id`` and ``agent`` from Phase 4). Set
 ``LOG_JSON=true`` for one JSON object per line, which is what you want in Docker
 and in production.
+
+Two processors run on every line before it is written: credentials (keys, passwords,
+tokens) are replaced by ``***``, and personal data is masked (Phase 5): values of keys
+such as ``phone``, ``email`` or ``address`` become ``***``, and phone numbers or email
+addresses inside any other text become ``[phone]`` and ``[email]``.
 """
 
 import logging
@@ -32,6 +37,37 @@ def mask_sensitive_fields(_logger: Any, _method: str, event_dict: dict[str, Any]
     return event_dict
 
 
+def _mask_value(value: Any, depth: int = 0) -> Any:
+    from app.agents.guardrails import is_pii_key, mask_pii
+
+    if isinstance(value, str):
+        return mask_pii(value)
+    if depth >= 4:
+        return value
+    if isinstance(value, dict):
+        return {
+            k: MASK if isinstance(k, str) and is_pii_key(k) else _mask_value(v, depth + 1)
+            for k, v in value.items()
+        }
+    if isinstance(value, list | tuple):
+        return [_mask_value(v, depth + 1) for v in value]
+    return value
+
+
+def mask_personal_data(_logger: Any, _method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """Mask phone numbers, email addresses and address fields (POL-DATA-001)."""
+    from app.agents.guardrails import is_pii_key
+
+    for key, value in list(event_dict.items()):
+        if key in {"timestamp", "level", "logger"}:
+            continue
+        if is_pii_key(key):
+            event_dict[key] = MASK
+        else:
+            event_dict[key] = _mask_value(value)
+    return event_dict
+
+
 def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
     """Route both structlog and stdlib logging through one formatter."""
     shared_processors: list[Any] = [
@@ -40,6 +76,7 @@ def configure_logging(level: str = "INFO", json_logs: bool = False) -> None:
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         mask_sensitive_fields,
+        mask_personal_data,
     ]
 
     renderer: Any

@@ -69,10 +69,43 @@ class SourceView(BaseModel):
 
 
 class ProposedActionView(BaseModel):
+    action_id: str | None = None
     tool: str
     arguments: dict[str, Any]
     reason: str
-    status: str
+    status: str = Field(
+        description="proposed, awaiting_approval, approved, modified, rejected, blocked, "
+        "needs_owner, done or failed (done and failed come only from the tool's result)"
+    )
+    required_role: str | None = None
+    approval_id: str | None = None
+    result: str | None = Field(default=None, description="What the tool returned, or why not")
+
+
+class ApprovalActionView(BaseModel):
+    approval_id: str
+    action_id: str
+    tool: str
+    arguments: dict[str, Any]
+    description: str
+    reason: str
+    required_role: Literal["staff", "owner"]
+    approval_reasons: list[str] = []
+    estimate: str | None = None
+
+
+class ApprovalRequestView(BaseModel):
+    """What a person is asked to decide: the actions, why, the evidence and the rules."""
+
+    workflow_id: str
+    required_role: Literal["staff", "owner"]
+    summary: str = ""
+    findings: list[str] = []
+    evidence: list[dict[str, Any]] = []
+    policy_references: list[str] = []
+    confidence: float | None = None
+    triggers: list[str] = []
+    actions: list[ApprovalActionView]
 
 
 class ToolActivity(BaseModel):
@@ -104,7 +137,7 @@ class UsageTotals(BaseModel):
 class ChatResponse(BaseModel):
     workflow_id: str
     session_id: str
-    status: Literal["completed", "needs_clarification", "failed"]
+    status: Literal["completed", "needs_clarification", "awaiting_approval", "blocked", "failed"]
     intent: str | None
     answer: str = Field(description="The reply, in Markdown")
     details: ReplyDetails
@@ -116,6 +149,49 @@ class ChatResponse(BaseModel):
     validation: str | None
     warnings: list[str]
     errors: list[str]
+    approval: ApprovalRequestView | None = Field(
+        default=None, description="Set when status is awaiting_approval: what to decide"
+    )
+
+
+class ActionDecision(BaseModel):
+    approval_id: str = Field(max_length=36)
+    decision: Literal["approve", "reject", "modify"]
+    arguments: dict[str, Any] | None = Field(
+        default=None, description="For modify: the tool's arguments as they should be"
+    )
+
+
+class ApprovalDecisionRequest(BaseModel):
+    user_id: str = Field(
+        pattern=r"^USR-\d{3}$",
+        examples=["USR-001"],
+        description="Who decides (owner or staff of the workflow's shop; login in Phase 6)",
+    )
+    decision: Literal["approve", "reject", "modify"] | None = Field(
+        default=None, description="One decision for every waiting action"
+    )
+    decisions: list[ActionDecision] = Field(
+        default=[], max_length=20, description="Or one decision per action, by approval_id"
+    )
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ApprovalRecordView(BaseModel):
+    approval_id: str
+    tool: str
+    status: str
+    required_role: str | None
+    decided_by: str | None
+    decided_at: str | None
+    decision_note: str | None
+
+
+class ApprovalStatusResponse(BaseModel):
+    workflow_id: str
+    workflow_status: str
+    approval: ApprovalRequestView | None
+    approvals: list[ApprovalRecordView]
 
 
 class GraphResponse(BaseModel):

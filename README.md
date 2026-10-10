@@ -2,7 +2,7 @@
 
 A multi-agent AI assistant that helps local shopkeepers keep their records organised and detailed.
 
-> **Status:** Phases 0–4 are done: the API foundations, database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, knowledge search (RAG) with citations, and the multi-agent assistant behind `POST /api/chat` (LangGraph, with checkpoints, conversation memory and a 10-case evaluation). The models can be reached through OpenAI, OpenRouter or a gateway such as [OmniRoute](docs/omniroute.md). Approvals and guardrails (Phase 5) come next. See [Roadmap](#roadmap).
+> **Status:** Phases 0–5 are done: the API foundations, database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, knowledge search (RAG) with citations, the multi-agent assistant behind `POST /api/chat` (LangGraph, with checkpoints and conversation memory), and human approval: a policy gate, a pause until a person decides (`POST /api/approval/{workflow_id}`), an Action agent that runs only what was approved, input and output guardrails, and a 15-case evaluation. The models can be reached through OpenAI, Google Gemini (free tier), OpenRouter or a gateway such as [OmniRoute](docs/omniroute.md). The full API (Phase 6) comes next. See [Roadmap](#roadmap).
 >
 > **New here? Read [docs/how-it-works.md](docs/how-it-works.md) first.**
 
@@ -196,6 +196,8 @@ Optional: `pre-commit install` (with the backend's `.venv` active) runs Ruff and
 | GET | `/api/knowledge/search?q=…` | Search the shop's documents; returns passages with citations ([docs/rag.md](docs/rag.md)) |
 | POST | `/api/chat` | Ask the agents about one shop; returns the answer, sources, proposed actions, tool calls and agent steps ([docs/agents.md](docs/agents.md)) |
 | GET | `/api/chat/graph` | The agent graph as a Mermaid diagram |
+| POST | `/api/approval/{workflow_id}` | Approve, change or reject the actions a paused workflow is waiting on, then resume it ([docs/agents.md](docs/agents.md#9-approvals-actions-and-guardrails-phase-5)) |
+| GET | `/api/approval/{workflow_id}` | What is waiting for approval, and what was decided |
 
 Every response carries an `X-Request-ID` header, and every error uses one shape:
 
@@ -212,7 +214,7 @@ Every response carries an `X-Request-ID` header, and every error uses one shape:
 | **2 Tools** | 3 | Typed read and action tools with mock APIs and failure injection ✅ |
 | **3 RAG** | 4–5 | Chunking, embeddings, ChromaDB, hybrid retriever, reranker, citations ✅ |
 | **4 Agent graph** | 6–7 | LangGraph state graph, the agents, database checkpointer, memory, `/api/chat` ✅ |
-| 5 Approval + guardrails | 8 | Policy gate, `interrupt()` approval, validator, input guardrails |
+| **5 Approval + guardrails** | 8 | Policy gate, `interrupt()` approval, Action agent, validator BLOCK, input guardrails, PII masking ✅ |
 | 6 API | 9 | All endpoints, SSE progress stream, rate limits, uploads |
 | 7 Frontend | 10 | Chat, workflow, sources, approval and admin pages |
 | 8 Evaluation | 11 | 40-case evaluation set, metrics, tracing, report |

@@ -17,12 +17,13 @@ import operator
 from typing import Annotated, Any, Literal, TypedDict
 
 ValidationDecision = Literal["PASS", "RETRY", "HUMAN_REVIEW", "BLOCK"]
-WorkflowOutcome = Literal["completed", "needs_clarification", "failed"]
+WorkflowOutcome = Literal["completed", "needs_clarification", "failed", "blocked"]
 Route = Literal[
     "data_retrieval",
     "knowledge",
     "investigation",
     "human_review",
+    "action",
     "respond",
     "clarify",
     "finalize",
@@ -57,6 +58,7 @@ class AgentState(TypedDict, total=False):
 
     # --- Triage ------------------------------------------------------------
     triage: dict[str, Any] | None  # the full TriageResult
+    input_flags: list[str]  # what the input guardrail found (app/agents/guardrails.py)
     intent: str | None
     entities: dict[str, Any]
     missing_information: list[str]
@@ -77,8 +79,13 @@ class AgentState(TypedDict, total=False):
     # --- Investigation and actions -------------------------------------------
     investigation_result: dict[str, Any] | None
     confidence: float | None
-    proposed_actions: list[dict[str, Any]]  # validated, not executed (Phase 5 executes)
-    human_approval: dict[str, Any] | None  # Phase 5: the person's decision
+    # Each action: tool, arguments, reason, action_id ("send_payment_reminder:1") and a
+    # status: proposed -> awaiting_approval -> approved / modified / rejected / blocked
+    # -> done / failed (set only from the tool's own result).
+    proposed_actions: list[dict[str, Any]]
+    approval_request: dict[str, Any] | None  # what the person was asked to decide
+    human_approval: dict[str, Any] | None  # who decided what, and when
+    action_results: list[dict[str, Any]]  # what each action tool returned
 
     # --- Answer ------------------------------------------------------------
     draft_response: dict[str, Any] | None  # the FinalResponse being validated
