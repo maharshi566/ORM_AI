@@ -135,8 +135,11 @@ checked it:
    reply that mentions an unknown ID.
 3. **Citations are checked.** Only citations of passages actually retrieved survive,
    in the investigation and in the reply. A question about a rule must cite one.
-4. **Proposing is not doing.** Proposed actions must pass the tool's own input
-   validation and get an idempotency key tied to the workflow. They run only after a
+4. **Proposing is not doing.** The investigation model is shown each action tool's
+   arguments (names, types, allowed values, from the tool's own input model). Proposed
+   actions must pass that validation; a proposal that fails gets one correction round
+   with the tool's own complaint, then is dropped with a warning. Each kept action gets
+   an idempotency key tied to the workflow. They run only after a
    person approves (or, for a low-risk draft the shopkeeper asked for, the policy gate),
    and only through the tool, which checks the approval itself. "Done" is filled in by
    code from the tool's success, and the validator rejects any sentence like "I have

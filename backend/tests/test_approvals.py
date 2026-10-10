@@ -461,3 +461,24 @@ async def test_an_evaluation_run_never_acts(make_deps, run_agent, session_factor
     assert action(state)["status"] == "approved"
     assert "evaluation run" in action(state)["result"]
     assert await notifications(session_factory, "supplier_follow_up") == 0
+
+
+async def test_a_proposal_with_wrong_arguments_gets_one_correction(make_deps, run_agent) -> None:
+    llm = RuleBasedLLM(bad_arguments=1)
+
+    state = await run_agent(make_deps(llm), LATE_PO, shop_id="SHOP-002")
+
+    [waiting] = approval_request(state)["actions"]
+    assert waiting["tool"] == "follow_up_supplier" and waiting["arguments"]["issue"] == "late"
+    assert llm.calls.count("investigation") == 2
+    assert "issue" in llm.repair_requests[0]  # the tool's own complaint was shown
+
+
+async def test_the_model_sees_each_action_tools_arguments(make_deps) -> None:
+    from app.agents.investigation import action_tools_text
+
+    text = action_tools_text(make_deps())
+
+    assert 'issue: "late" | "short"' in text
+    assert "new_selling_price: number" in text
+    assert "idempotency_key:" not in text  # made by the code, never by the model

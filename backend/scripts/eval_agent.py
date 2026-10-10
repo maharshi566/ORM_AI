@@ -144,7 +144,13 @@ async def run(args: argparse.Namespace) -> int:
         print(f"{o.case.id}: " + ", ".join(marks))
         for error in o.errors[:2]:
             print(f"    error: {error}")
+        if o.case.is_approval_case and not o.approval_ok and o.investigation:
+            print(f"    investigation: {o.investigation}")
+        for warning in [w for w in o.warnings if "proposed" in w][:2]:
+            print(f"    warning: {warning}")
         if args.case:
+            for warning in o.warnings:
+                print(f"    warning: {warning}")
             print(f"\n{o.answer}\n")
     print(
         f"\nIntent accuracy {report.intent_accuracy:.2f}, grounded and cited "

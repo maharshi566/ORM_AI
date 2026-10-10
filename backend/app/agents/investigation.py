@@ -16,6 +16,11 @@ Its output is checked in code before anyone relies on it:
   policy gate and a person decide first (app/agents/human_review.py), and the action
   agent runs only what was approved.
 
+The model is shown each action tool's arguments (names, types, allowed values), built
+from the tool's own input model, so it can write proposals the tools accept. If a
+proposal still fails the tool's validation, the model is shown the problems once and
+asked to correct the whole result (one extra call, only when needed).
+
 It decides where the workflow goes next (the "decision node"): back to data retrieval
 when a specific record is missing (at most AGENT_MAX_LOOPS times), to human review
 when there are actions or doubts, or straight to the response.
@@ -39,6 +44,7 @@ from app.agents.common import (
 from app.agents.schemas import InvestigationResult
 from app.graph.deps import AgentDeps
 from app.prompts.investigation_prompt import INVESTIGATION_PROMPT
+from app.services.portable_schema import portable_parameters
 
 AGENT = "investigation"
 
@@ -100,6 +106,61 @@ def check_result(
     return data, warnings
 
 
+def _describe_field(name: str, field: dict[str, Any], required: bool) -> str:
+    if "enum" in field:
+        kind = " | ".join(json.dumps(v) for v in field["enum"])
+    elif field.get("type") == "array":
+        items = field.get("items") or {}
+        if items.get("type") == "object":
+            inner = ", ".join(
+                f"{k}: {v.get('type', 'any')}" for k, v in (items.get("properties") or {}).items()
+            )
+            kind = f"list of {{{inner}}}"
+        else:
+            kind = f"list of {items.get('type', 'any')}"
+    else:
+        kind = str(field.get("type", "any"))
+    limits = [
+        f"{label} {field[key]}"
+        for key, label in (
+            ("minimum", ">="),
+            ("maximum", "<="),
+            ("minLength", "min length"),
+            ("maxLength", "max length"),
+        )
+        if key in field
+    ]
+    text = f"{name}: {kind}" + ("" if required else " (optional)")
+    if limits:
+        text += f" [{', '.join(limits)}]"
+    if field.get("description"):
+        text += f" - {field['description']}"
+    return text
+
+
+def action_tools_text(deps: AgentDeps) -> str:
+    """Each action tool with its arguments, for the model to write valid proposals."""
+    lines = []
+    for schema in deps.registry.schemas_for("action"):
+        function = schema["function"]
+        parameters = portable_parameters(function.get("parameters") or {})
+        required = set(parameters.get("required") or [])
+        fields = [
+            _describe_field(name, field, name in required)
+            for name, field in (parameters.get("properties") or {}).items()
+            if name != "idempotency_key"
+        ]
+        lines.append(
+            f"- {function['name']}: {function.get('description', '')}\n    " + "\n    ".join(fields)
+        )
+    return (
+        "<action_tools>\nActions you may propose. arguments_json must be a JSON object "
+        "with exactly these argument names and allowed values (never idempotency_key):\n"
+        + "\n".join(lines)
+        + "\n</action_tools>"
+    )
+
+
 def check_actions(
     result: InvestigationResult, state: dict[str, Any], deps: AgentDeps
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -122,7 +183,10 @@ def check_actions(
         try:
             checked = spec.input_model.model_validate(arguments).model_dump(mode="json")
         except ValidationError as exc:
-            problems = "; ".join(e["msg"] for e in exc.errors(include_url=False)[:3])
+            problems = "; ".join(
+                f"{'.'.join(str(p) for p in e['loc']) or 'arguments'}: {e['msg']}"
+                for e in exc.errors(include_url=False)[:4]
+            )
             warnings.append(f"Dropped a proposed {proposal.tool}: {problems}")
             continue
         same = json.dumps(
@@ -160,20 +224,44 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
             request_header(state, deps.now),
             render_records(state),
             render_passages(state),
+            action_tools_text(deps),
             f"This is investigation round {loops + 1}. More data can be requested "
             f"{max(0, max_loops - loops)} more time(s).",
             "Investigate and return the result.",
         ]
     )
+    messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
     reply = await deps.llm.structured(
-        InvestigationResult,
-        system=INVESTIGATION_PROMPT.render(),
-        messages=[{"role": "user", "content": task}],
-        tier="smart",
+        InvestigationResult, system=INVESTIGATION_PROMPT.render(), messages=messages, tier="smart"
     )
+    usage = reply.usage
     result = reply.value
-    checked, warnings = check_result(result, state)
     actions, action_warnings = check_actions(result, state, deps)
+    unusable = [w for w in action_warnings if w.startswith("Dropped a proposed")]
+    if unusable:
+        # One chance to fix the arguments, with the tools' own complaints.
+        messages += [
+            {"role": "assistant", "content": result.model_dump_json()},
+            {
+                "role": "user",
+                "content": "These proposed actions were not accepted:\n- "
+                + "\n- ".join(unusable)
+                + "\nReturn the whole result again with corrected arguments_json (use "
+                "only the argument names and values listed in <action_tools>), or leave "
+                "an action out if it should not be done.",
+            },
+        ]
+        retry = await deps.llm.structured(
+            InvestigationResult,
+            system=INVESTIGATION_PROMPT.render(),
+            messages=messages,
+            tier="smart",
+        )
+        usage = usage + retry.usage
+        result = retry.value
+        actions, action_warnings = check_actions(result, state, deps)
+        action_warnings = [*unusable, *action_warnings]
+    checked, warnings = check_result(result, state)
     warnings += action_warnings
 
     update: dict[str, Any] = {
@@ -197,6 +285,7 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
         decision = "ready to answer"
     return AgentOutcome(
         update=update,
-        summary=f"{result.issue_type}: {decision}; confidence {result.confidence:.2f}",
-        usage=reply.usage,
+        summary=f"{result.issue_type}: {decision}; confidence {result.confidence:.2f}"
+        + (f"; {len(unusable)} proposal(s) corrected" if unusable else ""),
+        usage=usage,
     )

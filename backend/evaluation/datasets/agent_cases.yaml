@@ -98,22 +98,24 @@ cases:
     documents: [POL-SUPPLIER-001]
     approval: {tool: follow_up_supplier, role: staff, approved_result: done}
 
+  # Each request below is allowed by the shop's rules, so a careful model should propose
+  # it (a request the rules forbid, such as reminding CUST-0004 again, is better left
+  # unproposed: tests/test_approvals.py covers what happens when it is approved anyway).
   - id: H02
-    shop_id: SHOP-004
-    message: PRD-0085 is priced below cost. Please change the price to Rs 355.
+    shop_id: SHOP-001
+    message: Please change the selling price of PRD-0002 to Rs 125.
     intent: [pricing]
-    records: [PRD-0085]
-    documents: [POL-PRICING-001, SOP-PRICE-001]
+    records: [PRD-0002]
+    documents: [POL-PRICING-001, SOP-PRICE-001, POL-APPROVAL-001]
     approval: {tool: update_selling_price, role: owner, approved_result: done}
 
   - id: H03
-    shop_id: SHOP-001
-    message: Please send CUST-0004 a payment reminder.
+    shop_id: SHOP-036
+    message: Please send CUST-0748 a payment reminder.
     intent: [payment_reminder]
-    records: [CUST-0004]
+    records: [CUST-0748]
     documents: [POL-REMINDER-001]
-    # A reminder went out 2 days ago, so the tool refuses even when a person approves.
-    approval: {tool: send_payment_reminder, role: staff, approved_result: failed}
+    approval: {tool: send_payment_reminder, role: staff, approved_result: done}
 
   - id: H04
     shop_id: SHOP-001
@@ -125,8 +127,8 @@ cases:
 
   - id: H05
     shop_id: SHOP-001
-    message: I counted PRD-0002 and found 6 fewer than the system. Please record the adjustment.
+    message: 2 packets of PRD-0003 are damaged and must be thrown away. Please record the damage.
     intent: [stock_discrepancy]
-    records: [PRD-0002]
+    records: [PRD-0003]
     documents: [POL-ADJUST-001, SOP-COUNT-001]
     approval: {tool: record_stock_adjustment, role: staff, approved_result: done}

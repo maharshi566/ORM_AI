@@ -73,6 +73,8 @@ class CaseOutcome:
     outcome: str | None = None
     action_statuses: dict[str, str] = field(default_factory=dict)
     false_claims: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    investigation: str = ""  # the investigation agent's one-line summary, for misses
 
     @property
     def approval_ok(self) -> bool:
@@ -199,6 +201,10 @@ def score(case: AgentCase, state: dict[str, Any], latency_ms: float) -> CaseOutc
         outcome=state.get("outcome"),
         action_statuses={a["tool"]: a["status"] for a in state.get("proposed_actions") or []},
         false_claims=unsupported_claims(_claim_text(state), state),
+        warnings=list(dict.fromkeys(state.get("warnings") or [])),
+        investigation=next(
+            (t["summary"] for t in reversed(trace) if t.get("agent") == "investigation"), ""
+        ),
     )
 
 
@@ -276,6 +282,10 @@ def to_markdown(report: AgentEvalReport, *, minimum: float = 0.8) -> str:
                     f"asked: {', '.join(f'{t} ({r})' for t, r in o.asked) or 'nothing'}; "
                     f"outcome {o.outcome}"
                 )
+                if o.investigation:
+                    lines.append(f"- investigation: {o.investigation}")
+            for warning in [w for w in o.warnings if "proposed" in w][:3]:
+                lines.append(f"- warning: {warning}")
             if o.false_claims:
                 lines.append(f"- claims without a tool result: {', '.join(o.false_claims)}")
             for error in o.errors[:3]:

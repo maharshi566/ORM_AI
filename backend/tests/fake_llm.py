@@ -13,7 +13,9 @@ checkpointer and the validator. Switches make it misbehave on purpose:
 * ``confidence``: the investigation's confidence (0.8 unless set);
 * ``false_claims``: the first N replies say "I have sent the reminder" regardless;
 * ``obey_injection``: replies do what the supplier flyer's hidden notice says;
-* ``judge_unsupported``: the first N groundedness checks find an unsupported claim.
+* ``judge_unsupported``: the first N groundedness checks find an unsupported claim;
+* ``bad_arguments``: the first N investigations write a supplier follow-up with an
+  argument value the tool does not accept (``issue: "delayed"``).
 
 Actions it proposes (Phase 5), from the words of the request: a supplier follow-up for
 a late or short order, a payment reminder, a price change ("... to Rs 355"), a stock
@@ -45,7 +47,7 @@ RULES: list[tuple[tuple[str, ...], str]] = [
     (("return", "refund"), "returns"),
     (("reminder", "remind"), "payment_reminder"),
     (("arrived", "delivery", "not arrived", "supplier", "purchase order"), "supplier_issue"),
-    (("counted", "fewer", "less than the system", "count"), "stock_discrepancy"),
+    (("counted", "fewer", "less than the system", "count", "damaged"), "stock_discrepancy"),
     (("margin", "priced", "price"), "pricing"),
     (("credit limit for",), "policy_question"),
     (("owe", "credit", "udhaar", "dues"), "customer_credit"),
@@ -113,6 +115,22 @@ def _more_actions(request: str, intent: str) -> list[dict[str, Any]]:
                 "reason": "Counted stock is lower (POL-ADJUST-001).",
             }
         )
+    damaged = re.search(r"(\d+) (?:packets?|units?|pieces?|items?)\b", lowered)
+    if intent == "stock_discrepancy" and products and damaged and "damaged" in lowered:
+        actions.append(
+            {
+                "tool": "record_stock_adjustment",
+                "arguments_json": json.dumps(
+                    {
+                        "product_id": products[0],
+                        "quantity_change": -int(damaged.group(1)),
+                        "movement_type": "damage",
+                        "reason": "Damaged stock thrown away.",
+                    }
+                ),
+                "reason": "Damaged stock is written off (POL-ADJUST-001).",
+            }
+        )
     if intent == "returns" and sales and ("process" in lowered or "refund" in lowered):
         actions.append(
             {
@@ -171,6 +189,7 @@ class RuleBasedLLM:
         false_claims: int = 0,
         obey_injection: bool = False,
         judge_unsupported: int = 0,
+        bad_arguments: int = 0,
     ) -> None:
         self.fail = set(fail)
         self.more_data = more_data
@@ -180,6 +199,8 @@ class RuleBasedLLM:
         self.false_claims = false_claims
         self.obey_injection = obey_injection
         self.judge_unsupported = judge_unsupported
+        self.bad_arguments = bad_arguments
+        self.repair_requests: list[str] = []
         self.calls: list[str] = []
 
     def model_for(self, tier: str) -> str:
@@ -201,6 +222,9 @@ class RuleBasedLLM:
             value = self._triage(task)
         elif schema is InvestigationResult:
             self._maybe_fail("investigation")
+            if "were not accepted" in task:
+                self.repair_requests.append(task)
+            task = str(messages[0]["content"])  # a correction round repeats the first task
             value = self._investigation(task)
         elif schema is FinalResponse:
             self._maybe_fail("respond")
@@ -276,6 +300,9 @@ class RuleBasedLLM:
                 if any(w in request.lower() for w in ("only", "instead", "short"))
                 else "late"
             )
+            if self.bad_arguments > 0:
+                self.bad_arguments -= 1
+                issue = "delayed"
             actions.append(
                 {
                     "tool": "follow_up_supplier",

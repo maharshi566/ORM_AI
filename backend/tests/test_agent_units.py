@@ -63,6 +63,12 @@ def test_each_intent_gets_the_specialists_it_needs() -> None:
         "knowledge",
     ]
     assert make_plan(triage("stock_status", wants_action=True)) == ["data", "investigation"]
+    # "Should I reorder?" needs the reorder rules, whatever triage called it.
+    assert make_plan(triage("stock_status"), "Which are low? Should I reorder any?") == [
+        "data",
+        "knowledge",
+        "investigation",
+    ]
 
 
 def test_the_supervisor_routes_by_what_has_run() -> None:

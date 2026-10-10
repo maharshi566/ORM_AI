@@ -14,9 +14,11 @@ supervisor picks the next step from the triage result and what has already run:
 Why rules and not a model? Routing must be predictable, cheap and testable, and the
 judgement it needs (what is being asked) is already in the triage result. The triage
 agent's ``recommended_route`` can add specialists, never remove the ones an intent
-requires.
+requires. A question that mentions reordering ("should I reorder any?") always gets
+the rules and an investigation too, even when triage calls it a stock question.
 """
 
+import re
 from typing import Any
 
 from app.agents.common import AgentOutcome
@@ -51,14 +53,19 @@ INVESTIGATE: frozenset[str] = frozenset(
     }
 )
 
+# Words that make a stock question a reorder question (rules and an investigation).
+REORDER_WORDS = re.compile(r"\b(?:re-?order\w*|order more|restock\w*|stock up)\b", re.IGNORECASE)
+
 OUT_OF_SCOPE_REPLY = (
     "I can help with this shop's stock, sales, purchase orders, suppliers, customer "
     "credit (udhaar) and shop rules. Could you ask me something about those?"
 )
 
 
-def make_plan(triage: dict[str, Any]) -> list[str]:
+def make_plan(triage: dict[str, Any], query: str = "") -> list[str]:
     intent = triage.get("intent") or "general_help"
+    if intent == "stock_status" and REORDER_WORDS.search(query or ""):
+        intent = "reorder"
     wanted = set(INTENT_PLAN.get(intent, ["data", "knowledge"]))
     if intent != "out_of_scope":
         wanted |= set(triage.get("recommended_route") or [])
@@ -93,7 +100,7 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
     update: dict[str, Any] = {}
     plan = state.get("plan")
     if plan is None and state.get("triage") is not None:
-        plan = make_plan(state["triage"])
+        plan = make_plan(state["triage"], state.get("user_query") or "")
         update["plan"] = plan
     route, reason = next_step(state, plan or [])
     update["route"] = route
