@@ -89,6 +89,22 @@ class Settings(BaseSettings):
     session_memory_turns: int = 10  # earlier messages the agents see
     session_ttl_hours: int = 24  # how long Redis keeps a quiet conversation
 
+    # --- API layer (Phase 6) ----------------------------------------------
+    # Signed login tokens. Empty secret: a random one per process (tokens stop working
+    # after a restart). Set AUTH_SECRET in production, and AUTH_REQUIRED=true.
+    auth_secret: SecretStr | None = None
+    auth_required: bool = False  # true: every chat/approval/record call needs a token
+    auth_token_hours: int = 12
+    # POST /api/auth/dev-token gives a token for any user ID. Never on in production.
+    auth_dev_login: bool = True
+    rate_limit_enabled: bool = True
+    rate_limit_agent: str = "20/minute"  # chat, agent run, approvals (per user or IP)
+    rate_limit_upload: str = "10/hour"
+    # memory (one process) or a Redis URL such as redis://localhost:6379/1
+    rate_limit_storage: str = "memory"
+    upload_dir: str = "./data/uploads"
+    upload_max_mb: float = 5.0
+
     # --- Tracing (used from Phase 4) -------------------------------------
     langsmith_tracing: bool = False
     langsmith_api_key: SecretStr | None = None
@@ -115,6 +131,21 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
+
+    def production_problems(self) -> list[str]:
+        """What must change before the app may start with APP_ENV=production."""
+        problems = []
+        secret = self.auth_secret.get_secret_value().strip() if self.auth_secret else ""
+        if len(secret) < 32:
+            problems.append(
+                "AUTH_SECRET must be at least 32 random characters (for example the output "
+                'of: python -c "import secrets; print(secrets.token_urlsafe(48))").'
+            )
+        if not self.auth_required:
+            problems.append("AUTH_REQUIRED must be true.")
+        if "*" in self.cors_origin_list:
+            problems.append("CORS_ORIGINS must list the frontend's address, not *.")
+        return problems
 
 
 @lru_cache

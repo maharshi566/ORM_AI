@@ -15,7 +15,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN useradd --create-home --uid 1000 appuser \
-    && mkdir -p /app/data/chroma \
+    && mkdir -p /app/data/chroma /app/data/uploads \
     && chown -R appuser:appuser /app/data
 
 COPY --from=deps /install /usr/local

@@ -8,7 +8,8 @@ to the next through a shared **state**.
 Phase 5 lets it **act**, safely: a policy gate decides who must approve each proposed
 action, the workflow **pauses** until a person decides (`POST /api/approval/...`), the
 Action agent runs only what was approved, and guardrails watch what comes in and what
-goes out ([section 9](#9-approvals-actions-and-guardrails-phase-5)).
+goes out ([section 9](#9-approvals-actions-and-guardrails-phase-5)). Phase 6 adds the
+rest of the API around them, including a live progress stream: [api.md](api.md).
 
 - [1. One question, start to finish](#1-one-question-start-to-finish)
 - [2. The agents](#2-the-agents)
@@ -422,7 +423,10 @@ checkpointer), so the backend can restart, or the owner can decide tomorrow.
 
 In the users table, SHOP-001's owner is USR-001 and staff USR-002; SHOP-002: USR-003
 (owner), USR-004 (staff); SHOP-004: USR-007 (owner), USR-008 (staff); SHOP-005: USR-009
-(owner), USR-010 (staff). Login replaces `user_id` in Phase 6.
+(owner), USR-010 (staff). Since Phase 6 you can log in instead: with a token
+(`POST /api/auth/dev-token`, then `Authorization: Bearer …`) leave `user_id` out and the
+token says who decides; with `AUTH_REQUIRED=true` a token is required. See
+[api.md](api.md#4-approvals).
 
 ### Guardrails
 

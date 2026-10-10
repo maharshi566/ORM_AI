@@ -163,10 +163,12 @@ class ActionDecision(BaseModel):
 
 
 class ApprovalDecisionRequest(BaseModel):
-    user_id: str = Field(
+    user_id: str | None = Field(
+        default=None,
         pattern=r"^USR-\d{3}$",
         examples=["USR-001"],
-        description="Who decides (owner or staff of the workflow's shop; login in Phase 6)",
+        description="Who decides (owner or staff of the workflow's shop). Not needed when "
+        "logged in: the token says who you are.",
     )
     decision: Literal["approve", "reject", "modify"] | None = Field(
         default=None, description="One decision for every waiting action"
@@ -196,3 +198,160 @@ class ApprovalStatusResponse(BaseModel):
 
 class GraphResponse(BaseModel):
     mermaid: str
+
+
+# ---------------------------------------------------------------- Phase 6
+
+
+class AgentRunRequest(BaseModel):
+    """A one-off task, without a conversation: nothing is remembered between runs."""
+
+    shop_id: str = Field(pattern=r"^SHOP-\d{3}$", examples=["SHOP-002"])
+    task: str = Field(
+        min_length=1,
+        max_length=2000,
+        examples=["PO-00585 is 7 days late. Message the supplier about it."],
+    )
+    user_id: str | None = Field(default=None, pattern=r"^USR-\d{3}$")
+
+
+class DevTokenRequest(BaseModel):
+    user_id: str = Field(pattern=r"^USR-\d{3}$", examples=["USR-003"])
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"  # noqa: S105 - the OAuth token type, not a secret
+    expires_in: int = Field(description="Seconds until the token expires")
+    user_id: str
+    shop_id: str | None
+    role: str
+
+
+class MeResponse(BaseModel):
+    user_id: str | None
+    shop_id: str | None
+    role: str | None
+    authenticated: bool
+
+
+class MessageView(BaseModel):
+    role: str
+    content: str
+    created_at: str
+    workflow_id: str | None
+
+
+class WorkflowSummary(BaseModel):
+    workflow_id: str
+    status: str
+    intent: str | None
+    user_query: str
+    created_at: str
+    completed_at: str | None
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+    shop_id: str
+    user_id: str | None
+    title: str | None
+    created_at: str
+    last_active_at: str
+    messages: list[MessageView]
+    workflows: list[WorkflowSummary]
+
+
+class AgentRunView(BaseModel):
+    agent: str
+    status: str
+    model: str | None
+    latency_ms: float | None
+    input_tokens: int | None
+    output_tokens: int | None
+    summary: str | None
+    error: str | None
+    started_at: str
+
+
+class ToolCallView(BaseModel):
+    agent: str | None
+    tool: str
+    status: str
+    error_code: str | None
+    latency_ms: float
+    arguments: dict[str, Any]
+    created_at: str
+
+
+class WorkflowResponse(BaseModel):
+    workflow_id: str
+    session_id: str | None
+    shop_id: str
+    status: str
+    intent: str | None
+    user_query: str
+    final_response: str | None
+    error: str | None
+    created_at: str
+    updated_at: str | None
+    completed_at: str | None
+    agents: list[AgentRunView]
+    tool_calls: list[ToolCallView]
+    approvals: list[ApprovalRecordView]
+    approval: ApprovalRequestView | None = Field(
+        default=None, description="When the workflow is waiting: what to decide"
+    )
+
+
+class UploadResponse(BaseModel):
+    document_id: str
+    title: str
+    category: str
+    shop_id: str | None
+    trust: Literal["trusted", "untrusted"]
+    path: str
+    size_bytes: int
+    already_uploaded: bool
+    ingest_job_id: str | None = Field(
+        default=None, description="The background ingestion started for it, if any"
+    )
+    notes: list[str] = []
+
+
+class IngestJobResponse(BaseModel):
+    job_id: str
+    status: Literal["running", "done", "failed"]
+    started_at: str
+    finished_at: str | None
+    summary: dict[str, Any] = {}
+    error: str | None = None
+
+
+class AgentMetrics(BaseModel):
+    agent: str
+    runs: int
+    errors: int
+    avg_latency_ms: float
+    p95_latency_ms: float
+    input_tokens: int
+    output_tokens: int
+
+
+class ToolMetrics(BaseModel):
+    tool: str
+    calls: int
+    errors: int
+    error_codes: dict[str, int]
+    avg_latency_ms: float
+
+
+class MetricsResponse(BaseModel):
+    generated_at: str
+    scope: str = Field(description="all shops, or the logged-in user's shop")
+    workflows: dict[str, int] = Field(description="Workflows by status, plus total")
+    workflows_last_24h: int
+    agents: list[AgentMetrics]
+    tools: list[ToolMetrics]
+    approvals: dict[str, int]
+    documents: dict[str, int]

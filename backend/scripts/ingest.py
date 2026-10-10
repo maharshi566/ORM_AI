@@ -62,6 +62,9 @@ def format_report(report: IngestReport, chroma_dir: str) -> str:
     else:
         lines.append("Nothing new to embed: every chunk was already stored.")
     lines.append(f"Database: {report.database}.")
+    if report.skipped_uploads:
+        lines.append(f"Skipped {len(report.skipped_uploads)} uploaded file(s) that cannot be used:")
+        lines += [f"  {problem}" for problem in report.skipped_uploads]
     lines.append(f"Done in {report.seconds:.1f} s.")
     return "\n".join(lines)
 
@@ -104,6 +107,7 @@ async def run(args: argparse.Namespace) -> int:
     try:
         report = await ingest_knowledge_base(
             kb_dir=kb_dir,
+            upload_dir=backend_path(settings.upload_dir),
             store=store,
             embedder=embedder,
             session_factory=session_factory,

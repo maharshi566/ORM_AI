@@ -14,7 +14,11 @@ from app.api.router import api_router
 from app.config.settings import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
-from app.core.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
+from app.core.middleware import (
+    REQUEST_ID_HEADER,
+    BodySizeLimitMiddleware,
+    RequestContextMiddleware,
+)
 from app.core.tracing import configure_tracing
 from app.models.database import dispose_engine, init_engine
 from app.services.redis_client import close_redis, init_redis
@@ -22,16 +26,46 @@ from app.services.redis_client import close_redis, init_redis
 logger = get_logger(__name__)
 
 
+STREAM_SHUTDOWN_SECONDS = 30
+
+
+async def _finish_streams(app: FastAPI) -> None:
+    """Let streamed chats that are still running finish before the database closes.
+
+    A workflow stopped halfway could leave an approved action unreported. Whatever is
+    still running after STREAM_SHUTDOWN_SECONDS is cancelled; its workflow then shows
+    as failed or stalled, and an approval can be sent again.
+    """
+    tasks = [task for task in app.state.stream_tasks if not task.done()]
+    if not tasks:
+        return
+    logger.info("waiting_for_streams", count=len(tasks))
+    _, pending = await asyncio.wait(tasks, timeout=STREAM_SHUTDOWN_SECONDS)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+        logger.warning("streams_cancelled_at_shutdown", count=len(pending))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
+    if settings.is_production and (problems := settings.production_problems()):
+        for problem in problems:
+            logger.error("unsafe_production_settings", problem=problem)
+        raise RuntimeError("Refusing to start in production: " + " ".join(problems))
     configure_tracing(settings)
+    from app.services.documents_service import sweep_staging
+
+    sweep_staging(settings)
     init_engine(settings.database_url, transaction_pooler=settings.db_transaction_pooler)
     init_redis(settings.redis_url)
     logger.info("app_started", environment=settings.app_env, version=settings.app_version)
     try:
         yield
     finally:
+        await _finish_streams(app)
         await close_redis()
         await dispose_engine()
         logger.info("app_stopped")
@@ -55,9 +89,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.knowledge_lock = asyncio.Lock()
     app.state.agent_runtime = None  # built on the first chat (see services/chat_service.py)
     app.state.agent_lock = asyncio.Lock()
+    app.state.stream_tasks = set()  # streamed chats still running (api/routes/chat.py)
     app.dependency_overrides[get_settings] = lambda: settings
 
-    # The last middleware added runs first, so request IDs wrap everything else.
+    # The last middleware added runs first: request IDs wrap everything, then CORS (so
+    # that even a "too large" answer reaches the browser), then the body size limit.
+    app.add_middleware(
+        BodySizeLimitMiddleware,
+        upload_max_bytes=int(settings.upload_max_mb * 1_000_000),
+        upload_path=f"{settings.api_prefix}/documents/upload",
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

@@ -1,4 +1,4 @@
-# How ORM_AI works (Phases 0–5)
+# How ORM_AI works (Phases 0–6)
 
 This guide explains what is built so far and how the pieces fit together. Read it
 top to bottom once. After that, use the other guides as references:
@@ -7,6 +7,7 @@ top to bottom once. After that, use the other guides as references:
 - [tools.md](tools.md): every tool the agents can call, and the rules they enforce
 - [rag.md](rag.md): knowledge search, from documents to cited passages
 - [agents.md](agents.md): the agents, how a question is answered, and choosing a model
+- [api.md](api.md): every endpoint, logging in, the progress stream, uploads, errors and limits
 - [supabase.md](supabase.md): using Supabase as the database
 - [omniroute.md](omniroute.md): using OmniRoute (or another gateway) instead of a plain OpenAI key
 
@@ -41,6 +42,8 @@ Built so far:
 | 2 Tools | 21 typed tools (13 read, 8 action), with approvals, idempotency, retries and logging | `tools/` |
 | 3 Knowledge search | Documents chunked and embedded into ChromaDB; hybrid search with citations; the `search_knowledge` tool; a 20-question evaluation | `rag/`, `scripts/ingest.py`, `evaluation/` |
 | 4 Agents | A LangGraph graph of agents (triage, supervisor, data retrieval, knowledge, investigation, response, validator) behind `POST /api/chat`, with checkpoints, conversation memory and a 10-case evaluation | `agents/`, `graph/`, `services/chat_*.py`, [agents.md](agents.md) |
+| 5 Approval + guardrails | A policy gate that decides who must approve what, a pause until a person decides (`POST /api/approval/{workflow_id}`), an Action agent that runs only what was approved, input and output guardrails, a 15-case evaluation | `agents/policy_gate.py`, `human_review.py`, `action.py`, `guardrails.py`, `services/approval_service.py` |
+| 6 API | Logins (signed tokens), a live progress stream, rate limits, document uploads with background ingestion, and read-back of conversations, workflows and metrics | `api/routes/`, `core/auth.py`, `core/rate_limit.py`, `services/documents_service.py`, `services/records_service.py`, [api.md](api.md) |
 
 ## 2. What happens when a request comes in (Phase 0)
 
@@ -301,9 +304,45 @@ tools, checks every ID and citation, and runs an action only after a person appr
 then the Action agent). See [agents.md](agents.md#9-approvals-actions-and-guardrails-phase-5).
 Everything is explained, with diagrams, in [agents.md](agents.md).
 
-## 9. What comes next
+## 9. The API (Phase 6)
+
+Phase 6 puts a complete web API around the agents. Four ideas carry it:
+
+- **Who is calling.** A login is a signed token (a JWT): the server signs "USR-002,
+  SHOP-001, staff, valid until 21:00" with `AUTH_SECRET`, so nobody can change it without
+  the signature breaking. Every call checks the signature and then the database, so a
+  user who was switched off is logged out at once. Locally, calls still work without a
+  token; with `AUTH_REQUIRED=true` they do not, and a user reaches only their own shop.
+- **Progress as it happens.** `POST /api/chat/stream` answers with Server-Sent Events:
+  each agent reports when it starts and finishes (`AgentDeps.on_event`), the route puts
+  each report on a queue, and the response sends them one by one. The frontend's
+  workflow panel (Phase 7) shows them.
+- **Fair use.** Each model call costs money or free-tier quota, so each user may make 20
+  agent calls a minute (`RATE_LIMIT_AGENT`); over that, the API answers 429 with a
+  `Retry-After` header. Bodies over the size limit are refused before they are read.
+- **Shops add their own documents.** An upload is checked (size, real type, a
+  server-made name, server-written metadata, readable by the loader) and saved as
+  untrusted unless an owner says otherwise; ingestion then runs in the background, and a
+  file that cannot be used is skipped, never fatal.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant A as FastAPI route
+    participant G as Agent graph
+    B->>A: POST /api/chat/stream + token
+    A->>A: check token, user, shop, rate limit
+    A->>G: run the workflow (background task)
+    G-->>A: triage started / finished ...
+    A-->>B: event: stage (one per agent step)
+    G-->>A: paused for approval, or the reply
+    A-->>B: event: approval_requested / result
+```
+
+Every endpoint, with examples, is in [api.md](api.md).
+
+## 10. What comes next
 
 | Phase | Builds on | Adds |
 | --- | --- | --- |
-| 6 API | `POST /api/chat`, `POST /api/approval`, the agent events (`AgentDeps.on_event`) | All endpoints, login instead of `user_id`, a live progress stream, rate limits, uploads |
-| 7 Frontend | the chat response (sources, steps, the `approval` block) | Chat, workflow, sources, approval (Approve / Reject / Modify buttons) and admin pages |
+| 7 Frontend | the chat response (sources, steps, the `approval` block), `/api/chat/stream`, `/api/workflows/{id}`, `/api/metrics`, logins | Chat, workflow, sources, approval (Approve / Reject / Modify buttons) and admin pages |

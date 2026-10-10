@@ -15,12 +15,14 @@ Each action tool follows the same steps:
    only if every step succeeded, so an action is never half done.
 """
 
+import secrets
 from datetime import timedelta
 from decimal import Decimal
 from typing import Literal
 
 from pydantic import Field, model_validator
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.models import (
     Case,
@@ -141,10 +143,79 @@ def _po_output(
     )
 
 
-async def _next_id(ctx: ToolContext, column, prefix: str, width: int) -> str:  # type: ignore[no-untyped-def]
+async def _next_id(ctx: ToolContext, column, prefix: str, width: int, skip: int = 0) -> str:  # type: ignore[no-untyped-def]
     latest = await ctx.session.scalar(select(func.max(column)).where(column.like(f"{prefix}-%")))
-    number = int(latest.split("-")[-1]) + 1 if latest else 1
+    number = (int(latest.split("-")[-1]) if latest else 0) + 1 + skip
     return f"{prefix}-{number:0{width}d}"
+
+
+MAX_ID_ATTEMPTS = 8
+
+
+def _spread(attempt: int) -> int:
+    """How far past the next free number a retry jumps.
+
+    Requests that lost the same race would otherwise all try the same next number and
+    collide again, one winner per round. A random jump spreads them out. Record numbers
+    may then skip a few values, which is harmless.
+    """
+    return 0 if attempt == 0 else secrets.randbelow(4 * attempt + 1)
+
+
+async def _number_taken(ctx: ToolContext, column, number: str) -> bool:  # type: ignore[no-untyped-def]
+    return await ctx.session.scalar(select(column).where(column == number).limit(1)) is not None
+
+
+def _conflict(prefix: str) -> ToolError:
+    return ToolError(
+        ToolErrorCode.CONFLICT,
+        f"Another request saved a {prefix} record at the same moment; try again.",
+        retryable=True,
+    )
+
+
+async def _add_numbered(ctx: ToolContext, column, prefix: str, width: int, build):  # type: ignore[no-untyped-def]
+    """Insert a record under the next free number, even when two requests race.
+
+    Two requests can read the same highest number at the same moment and both try
+    PO-00601. On PostgreSQL the insert runs in a savepoint: when the database refuses
+    the duplicate, only the savepoint is undone (otherwise the whole transaction would
+    be refused) and a later number is tried, up to MAX_ID_ATTEMPTS.
+
+    Only a taken *number* is retried. Any other duplicate (the same idempotency key
+    sent twice at once) is a conflict: the retry then finds and replays the first one.
+
+    On SQLite (the light local demo) there is no savepoint: Python's sqlite3 driver
+    commits everything when a savepoint that opened the transaction is released, so a
+    tool that failed after the insert would leave half its work saved. A clash there
+    fails this one action instead, and nothing is saved; trying again works.
+    """
+    if ctx.session.get_bind().dialect.name == "sqlite":
+        record = build(await _next_id(ctx, column, prefix, width))
+        ctx.session.add(record)
+        try:
+            await ctx.session.flush()
+        except IntegrityError as exc:
+            raise _conflict(prefix) from exc
+        return record
+
+    for attempt in range(MAX_ID_ATTEMPTS):
+        number = await _next_id(ctx, column, prefix, width, skip=_spread(attempt))
+        record = build(number)
+        try:
+            async with ctx.session.begin_nested():
+                ctx.session.add(record)
+                await ctx.session.flush()
+        except IntegrityError as exc:
+            if await _number_taken(ctx, column, number):
+                continue  # someone else took that number just now: try another one
+            raise _conflict(prefix) from exc
+        return record
+    raise ToolError(
+        ToolErrorCode.CONFLICT,
+        f"Could not get a new {prefix} number after {MAX_ID_ATTEMPTS} tries; try again.",
+        retryable=True,
+    )
 
 
 async def create_purchase_order(
@@ -194,32 +265,34 @@ async def create_purchase_order(
         needed = "owner" if total > PO_OWNER_THRESHOLD else "staff"
         ctx.require_approval(needed, f"purchase order of Rs {total} to {supplier.name}")
 
-    po = PurchaseOrder(
-        id=await _next_id(ctx, PurchaseOrder.id, "PO", 5),
-        shop_id=ctx.shop_id,
-        supplier_id=supplier.id,
-        status="placed" if args.submit_to_supplier else "draft",
-        ordered_at=ctx.now if args.submit_to_supplier else None,
-        expected_on=ctx.today + timedelta(days=supplier.lead_time_days)
-        if args.submit_to_supplier
-        else None,
-        total_amount=total,
-        notes=args.notes,
-        created_by=ctx.actor,
-        idempotency_key=args.idempotency_key,
-        created_at=ctx.now,
-    )
-    po.items = [
-        PurchaseOrderItem(
-            product_id=p.id,
-            quantity_ordered=line.quantity,
-            quantity_received=0,
-            unit_cost=money(p.cost_price),
+    def new_order(number: str) -> PurchaseOrder:
+        po = PurchaseOrder(
+            id=number,
+            shop_id=ctx.shop_id,
+            supplier_id=supplier.id,
+            status="placed" if args.submit_to_supplier else "draft",
+            ordered_at=ctx.now if args.submit_to_supplier else None,
+            expected_on=ctx.today + timedelta(days=supplier.lead_time_days)
+            if args.submit_to_supplier
+            else None,
+            total_amount=total,
+            notes=args.notes,
+            created_by=ctx.actor,
+            idempotency_key=args.idempotency_key,
+            created_at=ctx.now,
         )
-        for p, line in zip(products, args.lines, strict=True)
-    ]
-    ctx.session.add(po)
-    await ctx.session.flush()
+        po.items = [
+            PurchaseOrderItem(
+                product_id=p.id,
+                quantity_ordered=line.quantity,
+                quantity_received=0,
+                unit_cost=money(p.cost_price),
+            )
+            for p, line in zip(products, args.lines, strict=True)
+        ]
+        return po
+
+    po = await _add_numbered(ctx, PurchaseOrder.id, "PO", 5, new_order)
 
     supplier_ref = None
     if args.submit_to_supplier:
@@ -877,21 +950,26 @@ async def create_case(ctx: ToolContext, args: CreateCaseInput) -> CaseOutput:
     )
     if duplicate is not None:
         return CaseOutput(case_id=duplicate.id, status="open", replayed=True)
-    case = Case(
-        id=await _next_id(ctx, Case.id, "CASE", 4),
-        shop_id=ctx.shop_id,
-        category=args.category,
-        title=args.title,
-        description=args.description,
-        status="open",
-        resolution=None,
-        customer_id=args.customer_id,
-        supplier_id=args.supplier_id,
-        product_id=args.product_id,
-        opened_at=ctx.now,
-        resolved_at=None,
+    case = await _add_numbered(
+        ctx,
+        Case.id,
+        "CASE",
+        4,
+        lambda number: Case(
+            id=number,
+            shop_id=ctx.shop_id,
+            category=args.category,
+            title=args.title,
+            description=args.description,
+            status="open",
+            resolution=None,
+            customer_id=args.customer_id,
+            supplier_id=args.supplier_id,
+            product_id=args.product_id,
+            opened_at=ctx.now,
+            resolved_at=None,
+        ),
     )
-    ctx.session.add(case)
     audit(ctx, "create_case", "case", case.id, {"title": args.title})
     return CaseOutput(case_id=case.id, status="open")
 

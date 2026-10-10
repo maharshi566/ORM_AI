@@ -30,5 +30,6 @@ langsmith==0.14.1     # optional tracing (LANGSMITH_TRACING=true)
 # langgraph-checkpoint-postgres (it needs psycopg, which cannot run on Windows'
 # default event loop; app/graph/checkpointer.py saves checkpoints with SQLAlchemy).
 
-# --- Added in later phases ---
-# Phase 6: slowapi, python-multipart
+# --- Phase 6: the API layer ---
+limits==5.8.0            # rate limiting (the engine behind SlowAPI), memory or Redis storage
+python-multipart==0.0.32 # file uploads (multipart/form-data)

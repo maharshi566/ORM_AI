@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config.settings import Settings
 from app.core.exceptions import DependencyUnavailableError, ForbiddenError, NotFoundError
 from app.core.logging import get_logger
-from app.graph.deps import AgentDeps
+from app.graph.deps import AgentDeps, EventSink
 from app.graph.workflow import RECURSION_LIMIT, compile_graph, make_checkpointer
 from app.models import ChatSession, Shop, User, Workflow
 from app.models.schemas import (
@@ -124,7 +124,7 @@ async def _build_runtime(app: FastAPI) -> AgentRuntime:
     )
 
 
-def make_deps(rt: AgentRuntime) -> AgentDeps:
+def make_deps(rt: AgentRuntime, on_event: EventSink | None = None) -> AgentDeps:
     return AgentDeps(
         settings=rt.settings,
         llm=rt.llm,
@@ -133,6 +133,7 @@ def make_deps(rt: AgentRuntime) -> AgentDeps:
         now=business_now(rt.settings.business_date),
         knowledge=rt.knowledge,
         clients=rt.clients,
+        on_event=on_event,
     )
 
 
@@ -196,10 +197,13 @@ async def finish(
 ) -> ChatResponse:
     response = build_response(final, workflow_id, session_id)
     await close_workflow(rt, workflow_id, response)
-    try:
-        await rt.memory.append(session_id, "assistant", response.answer, workflow_id=workflow_id)
-    except Exception as exc:  # the reply exists; memory is a convenience
-        logger.warning("memory_append_failed", workflow_id=workflow_id, error=repr(exc))
+    if session_id:
+        try:
+            await rt.memory.append(
+                session_id, "assistant", response.answer, workflow_id=workflow_id
+            )
+        except Exception as exc:  # the reply exists; memory is a convenience
+            logger.warning("memory_append_failed", workflow_id=workflow_id, error=repr(exc))
     return response
 
 
@@ -207,8 +211,11 @@ class ChatService:
     def __init__(self, runtime: AgentRuntime) -> None:
         self.rt = runtime
 
-    async def _open_workflow(self, request: ChatRequest) -> tuple[str, str]:
-        """(session_id, workflow_id), after checking who may use which records."""
+    async def _open_workflow(self, request: ChatRequest, *, remember: bool) -> tuple[str, str]:
+        """(session_id, workflow_id), after checking who may use which records.
+
+        ``remember=False`` (POST /api/agent/run): no conversation, so session_id is "".
+        """
         async with self.rt.session_factory() as db:
             if await db.get(Shop, request.shop_id) is None:
                 raise NotFoundError(f"No shop with ID {request.shop_id}.")
@@ -216,27 +223,29 @@ class ChatService:
                 user = await db.get(User, request.user_id)
                 if user is None or user.shop_id != request.shop_id:
                     raise ForbiddenError(f"User {request.user_id} does not work at this shop.")
-            session_id = request.session_id or str(uuid.uuid4())
-            conversation = await db.get(ChatSession, session_id)
-            if conversation is None:
-                db.add(
-                    ChatSession(
-                        id=session_id,
-                        shop_id=request.shop_id,
-                        user_id=request.user_id,
-                        title=request.message[:200],
+            session_id = ""
+            if remember:
+                session_id = request.session_id or str(uuid.uuid4())
+                conversation = await db.get(ChatSession, session_id)
+                if conversation is None:
+                    db.add(
+                        ChatSession(
+                            id=session_id,
+                            shop_id=request.shop_id,
+                            user_id=request.user_id,
+                            title=request.message[:200],
+                        )
                     )
-                )
-            elif conversation.shop_id != request.shop_id:
-                # Same answer as "does not exist", so conversation IDs reveal nothing.
-                raise NotFoundError(f"No conversation {session_id} for this shop.")
-            else:
-                conversation.last_active_at = utcnow()
+                elif conversation.shop_id != request.shop_id:
+                    # Same answer as "does not exist", so conversation IDs reveal nothing.
+                    raise NotFoundError(f"No conversation {session_id} for this shop.")
+                else:
+                    conversation.last_active_at = utcnow()
             workflow_id = str(uuid.uuid4())
             db.add(
                 Workflow(
                     id=workflow_id,
-                    session_id=session_id,
+                    session_id=session_id or None,
                     shop_id=request.shop_id,
                     user_query=request.message,
                     status="running",
@@ -245,12 +254,23 @@ class ChatService:
             await db.commit()
         return session_id, workflow_id
 
-    async def handle(self, request: ChatRequest) -> ChatResponse:
-        session_id, workflow_id = await self._open_workflow(request)
-        history = await self.rt.memory.recent(session_id)
-        await self.rt.memory.append(session_id, "user", request.message, workflow_id=workflow_id)
+    async def handle(
+        self,
+        request: ChatRequest,
+        *,
+        on_event: EventSink | None = None,
+        remember: bool = True,
+    ) -> ChatResponse:
+        session_id, workflow_id = await self._open_workflow(request, remember=remember)
+        history: list[dict[str, Any]] = []
+        if remember:
+            history = await self.rt.memory.recent(session_id)
+            await self.rt.memory.append(
+                session_id, "user", request.message, workflow_id=workflow_id
+            )
+        await _emit(on_event, {"type": "workflow_started", "workflow_id": workflow_id})
 
-        deps = make_deps(self.rt)
+        deps = make_deps(self.rt, on_event)
         initial = {
             "workflow_id": workflow_id,
             "session_id": session_id,
@@ -262,6 +282,14 @@ class ChatService:
         config = graph_config(workflow_id, session_id, request.shop_id)
         final = await run_graph(self.rt, initial, config, deps, initial)
         return await finish(self.rt, final, workflow_id, session_id)
+
+
+async def _emit(on_event: EventSink | None, event: dict[str, Any]) -> None:
+    if on_event is not None:
+        try:
+            await on_event(event)
+        except Exception as exc:  # a broken listener must not break the workflow
+            logger.warning("event_sink_failed", error=repr(exc))
 
 
 def _action_views(

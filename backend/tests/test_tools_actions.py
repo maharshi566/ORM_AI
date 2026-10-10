@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import func, select
 
-from app.models import AuditLog, Notification, Product, PurchaseOrder
+from app.models import AuditLog, Notification, Product, PurchaseOrder, PurchaseOrderItem
 from app.tools.api_tools import FailureMode, FaultInjector
 from app.tools.base import IST
 from tests.conftest import ANCHOR_NOON, OWNER, STAFF
@@ -584,3 +584,42 @@ async def test_cases_open_freely_but_closing_needs_staff(
 
 def test_ist_constant_is_india() -> None:
     assert datetime(2026, 1, 1, tzinfo=IST).utcoffset() == timedelta(hours=5, minutes=30)
+
+
+# ------------------------------------------------------------ record numbers
+# (the retries on PostgreSQL are tested in test_tools_postgres.py)
+
+
+async def test_on_sqlite_a_taken_number_fails_cleanly(
+    registry, make_ctx, seed_data, session_factory, monkeypatch
+) -> None:
+    """Two requests read the same highest PO number. On SQLite the one that loses gets
+    a conflict it can retry, and nothing of its order is saved."""
+    from app.tools import business_tools
+
+    async with session_factory() as session:
+        taken = await session.scalar(select(func.max(PurchaseOrder.id)))
+        before = await session.scalar(select(func.count()).select_from(PurchaseOrder))
+
+    async def racing(ctx, column, prefix, width, skip=0):  # type: ignore[no-untyped-def]
+        return taken  # someone else inserted this number a moment ago
+
+    monkeypatch.setattr(business_tools, "_next_id", racing)
+    toor = seed_data.edge_cases["low_stock_no_po"]["product_id"]
+    args = po_args(toor, 24, "SUP-002", "t:race:po-number")
+    lost = await act(registry, make_ctx(), "create_purchase_order", **args)
+    monkeypatch.undo()
+    retried = await act(registry, make_ctx(), "create_purchase_order", **args)
+
+    assert lost.error_code == "conflict" and lost.retryable
+    assert retried.ok and retried.data["purchase_order_id"] > taken
+    async with session_factory() as session:
+        after = await session.scalar(select(func.count()).select_from(PurchaseOrder))
+        old = await session.get(PurchaseOrder, taken)
+        lines = await session.scalar(
+            select(func.count())
+            .select_from(PurchaseOrderItem)
+            .where(PurchaseOrderItem.purchase_order_id == retried.data["purchase_order_id"])
+        )
+    assert after == before + 1 and lines == 1
+    assert old is not None and old.idempotency_key != "t:race:po-number"  # untouched

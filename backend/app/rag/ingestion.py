@@ -16,6 +16,7 @@ opening ChromaDB.
 """
 
 import asyncio
+import dataclasses
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models import Document, DocumentChunk, Shop
 from app.rag.chunking import DEFAULT_MAX_TOKENS, DEFAULT_OVERLAP_TOKENS, Chunk, chunk_documents
 from app.rag.embeddings import Embedder
-from app.rag.loaders import LoadedDocument, load_directory
+from app.rag.loaders import LoadedDocument, load_directory, load_uploads
 from app.rag.vector_store import (
     COLLECTION_GROUPS,
     AsyncVectorStore,
@@ -54,6 +55,7 @@ class IngestReport:
     database: str = "skipped"
     dry_run: bool = False
     seconds: float = 0.0
+    skipped_uploads: list[str] = field(default_factory=list)  # uploads that could not be used
 
     def group(self, name: str) -> GroupStats:
         return self.by_group.setdefault(name, GroupStats())
@@ -75,9 +77,26 @@ class IngestReport:
         return self.database.startswith("failed")
 
 
+def load_all(kb_dir: Path, upload_dir: Path | None) -> tuple[list[LoadedDocument], list[str]]:
+    """The knowledge base plus usable uploads (paths start "uploads/"), and the uploads
+    that were skipped. A problem in the knowledge base itself still stops everything."""
+    docs = load_directory(kb_dir)
+    if upload_dir is None:
+        return docs, []
+    uploads, skipped = load_uploads(upload_dir)
+    taken = {doc.metadata.key for doc in docs}
+    for doc in uploads:
+        if doc.metadata.key in taken:  # cannot happen with UPL- IDs; never replace a policy
+            skipped.append(f"uploads/{doc.path}: {doc.metadata.key} is a knowledge-base ID")
+            continue
+        docs.append(dataclasses.replace(doc, path=f"uploads/{doc.path}"))
+    return docs, skipped
+
+
 async def ingest_knowledge_base(
     *,
     kb_dir: Path,
+    upload_dir: Path | None = None,
     store: VectorStore | AsyncVectorStore | None,
     embedder: Embedder | None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
@@ -89,7 +108,7 @@ async def ingest_knowledge_base(
 ) -> IngestReport:
     started = time.perf_counter()
     # Reading files (and PDFs) and chunking are blocking work, so they run in a thread.
-    docs = await asyncio.to_thread(load_directory, kb_dir)
+    docs, skipped = await asyncio.to_thread(load_all, kb_dir, upload_dir)
     chunks = await asyncio.to_thread(
         chunk_documents, docs, max_tokens=max_tokens, overlap_tokens=overlap_tokens
     )
@@ -98,6 +117,7 @@ async def ingest_knowledge_base(
         documents=len(docs),
         chunks=len(chunks),
         dry_run=dry_run,
+        skipped_uploads=skipped,
     )
     for name in COLLECTION_GROUPS:
         report.group(name)

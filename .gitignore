@@ -21,6 +21,7 @@ node_modules/
 
 # --- Local data ---
 backend/data/chroma/
+backend/data/uploads/
 backend/evaluation/reports/*
 !backend/evaluation/reports/.gitkeep
 *.sqlite3

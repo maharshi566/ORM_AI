@@ -310,3 +310,51 @@ def load_directory(base_dir: Path) -> list[LoadedDocument]:
     if problems:
         raise LoaderError(base_dir, "cannot load the knowledge base:\n  " + "\n  ".join(problems))
     return documents
+
+
+UPLOAD_ID_PREFIX = "UPL-"
+
+
+def _upload_problem(doc: LoadedDocument, path: Path, upload_dir: Path) -> str | None:
+    """Why an uploaded file must not be used, or None. The API writes these files and
+    their metadata itself, so anything else found there is refused, not trusted."""
+    folder = path.relative_to(upload_dir).parts[0] if path.parent != upload_dir else ""
+    meta = doc.metadata
+    if not meta.document_id.startswith(UPLOAD_ID_PREFIX):
+        return f"document_id {meta.document_id!r} does not start with {UPLOAD_ID_PREFIX}"
+    if (meta.shop_id or "shared") != folder:
+        return f"its shop ({meta.shop_id or 'shared'}) does not match its folder ({folder})"
+    if doc.format == "pdf" and doc.warnings:
+        return "a PDF without its .meta.yaml file"
+    return None
+
+
+def load_uploads(upload_dir: Path) -> tuple[list[LoadedDocument], list[str]]:
+    """Every usable uploaded document, and what was skipped (and why).
+
+    Unlike the knowledge base (where every problem must be fixed before ingesting), a
+    bad upload is skipped: one shop's broken file must not stop ingestion for all.
+    """
+    documents: list[LoadedDocument] = []
+    skipped: list[str] = []
+    seen: dict[str, str] = {}
+    if not upload_dir.is_dir():
+        return documents, skipped
+    for path in iter_knowledge_files(upload_dir):
+        relative = path.relative_to(upload_dir).as_posix()
+        try:
+            doc = load_file(path, upload_dir)
+        except LoaderError as exc:
+            skipped.append(f"uploads/{relative}: {str(exc).split(': ', 1)[-1]}")
+            continue
+        problem = _upload_problem(doc, path, upload_dir)
+        if problem is None and doc.metadata.key in seen:
+            problem = f"{doc.metadata.key} is already used by uploads/{seen[doc.metadata.key]}"
+        if problem:
+            skipped.append(f"uploads/{relative}: {problem}")
+            continue
+        seen[doc.metadata.key] = relative
+        documents.append(doc)
+    for line in skipped:
+        logger.warning("upload_skipped", problem=line)
+    return documents, skipped

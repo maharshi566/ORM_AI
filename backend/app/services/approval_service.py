@@ -37,12 +37,12 @@ from sqlalchemy import select
 
 from app.agents import policy_gate
 from app.agents.human_review import changed_records
+from app.core.auth import Principal, check_shop
 from app.core.exceptions import ConflictError, ForbiddenError, InvalidRequestError, NotFoundError
 from app.core.logging import get_logger
 from app.models import Approval, AuditLog, User, Workflow
 from app.models.schemas import (
     ApprovalDecisionRequest,
-    ApprovalRecordView,
     ApprovalRequestView,
     ApprovalStatusResponse,
     ChatResponse,
@@ -56,6 +56,7 @@ from app.services.chat_service import (
     paused_request,
     run_graph,
 )
+from app.services.records_service import approval_views
 from app.tools.base import business_now
 
 logger = get_logger(__name__)
@@ -70,7 +71,7 @@ class ApprovalService:
     def __init__(self, runtime: AgentRuntime) -> None:
         self.rt = runtime
 
-    async def _paused_request(self, workflow: Workflow) -> dict[str, Any] | None:
+    async def waiting_request(self, workflow: Workflow) -> dict[str, Any] | None:
         config = graph_config(workflow.id, workflow.session_id or "", workflow.shop_id)
         snapshot = await self.rt.graph.aget_state(config)
         if "human_review" not in (snapshot.next or ()):
@@ -81,11 +82,14 @@ class ApprovalService:
                 return value
         return None
 
-    async def status(self, workflow_id: str) -> ApprovalStatusResponse:
+    async def status(
+        self, workflow_id: str, *, principal: Principal | None = None
+    ) -> ApprovalStatusResponse:
         async with self.rt.session_factory() as db:
             workflow = await db.get(Workflow, workflow_id)
             if workflow is None:
                 raise NotFoundError(f"No workflow {workflow_id}.")
+            check_shop(principal, workflow.shop_id)
             rows = (
                 await db.scalars(
                     select(Approval)
@@ -94,7 +98,7 @@ class ApprovalService:
                 )
             ).all()
         request = (
-            await self._paused_request(workflow)
+            await self.waiting_request(workflow)
             if str(workflow.status) == "awaiting_approval"
             else None
         )
@@ -102,18 +106,7 @@ class ApprovalService:
             workflow_id=workflow_id,
             workflow_status=str(workflow.status),
             approval=ApprovalRequestView.model_validate(request) if request else None,
-            approvals=[
-                ApprovalRecordView(
-                    approval_id=row.id,
-                    tool=row.action_type,
-                    status=str(row.status),
-                    required_role=(row.proposed_action or {}).get("required_role"),
-                    decided_by=row.decided_by,
-                    decided_at=row.decided_at.isoformat() if row.decided_at else None,
-                    decision_note=row.decision_note,
-                )
-                for row in rows
-            ],
+            approvals=approval_views(list(rows)),
         )
 
     def _choices(
@@ -168,11 +161,18 @@ class ApprovalService:
                 f"The changed details for {row.action_type} are not valid: {problems}."
             ) from exc
 
-    async def decide(self, workflow_id: str, body: ApprovalDecisionRequest) -> ChatResponse:
+    async def decide(
+        self,
+        workflow_id: str,
+        body: ApprovalDecisionRequest,
+        *,
+        principal: Principal | None = None,
+    ) -> ChatResponse:
         async with self.rt.session_factory() as db:
             workflow = await db.get(Workflow, workflow_id, with_for_update=True)
             if workflow is None:
                 raise NotFoundError(f"No workflow {workflow_id}.")
+            check_shop(principal, workflow.shop_id)
             user = await db.get(User, body.user_id)
             if user is None or user.shop_id != workflow.shop_id or not user.is_active:
                 raise ForbiddenError(f"User {body.user_id} does not work at this shop.")
@@ -231,17 +231,23 @@ class ApprovalService:
                         f"{user.name} can reject it, or ask the owner.",
                         details={"approval_id": row.id, "required_role": "owner"},
                     )
-            if await self._paused_request(workflow) is None:
+            if await self.waiting_request(workflow) is None:
                 raise ConflictError(
                     f"Workflow {workflow_id} can no longer be resumed: its saved state is "
                     "gone (CHECKPOINTER=memory and a restart?). Ask the question again.",
                 )
 
             decided_at = utcnow()
+            # An admin may enter a decision for a shop user (the shop user's role
+            # counts); the record says who really entered it.
+            entered_by = principal.user_id if principal and principal.user_id != user.id else None
+            note = body.note
+            if entered_by:
+                note = f"{body.note or ''} [entered by {entered_by} for {user.id}]".strip()
             resume: dict[str, Any] = {
                 "decided_by": user.id,
                 "role": role,
-                "note": body.note,
+                "note": note,
                 "decided_at": decided_at.isoformat(),
                 "decisions": {},
             }
@@ -254,13 +260,13 @@ class ApprovalService:
                 }
                 row.status = STATUS_FOR[decision]
                 row.decided_by = user.id
-                row.decision_note = body.note
+                row.decision_note = note
                 row.decided_at = decided_at
                 row.final_action = None if decision == "reject" else final
                 db.add(
                     AuditLog(
                         actor_type="user",
-                        actor_id=user.id,
+                        actor_id=entered_by or user.id,
                         action=f"approval_{STATUS_FOR[decision]}",
                         entity_type="approval",
                         entity_id=row.id[:40],
@@ -268,9 +274,11 @@ class ApprovalService:
                         workflow_id=workflow_id,
                         details={
                             "tool": row.action_type,
+                            "decided_for": user.id,
                             "role": role,
                             "required_role": proposed.get("required_role"),
-                            "note": body.note,
+                            "note": note,
+                            **({"entered_by": entered_by} if entered_by else {}),
                             **({"arguments": arguments} if decision == "modify" else {}),
                         },
                     )
@@ -288,6 +296,7 @@ class ApprovalService:
             "approval_decided",
             workflow_id=workflow_id,
             decided_by=user.id,
+            entered_by=entered_by,
             role=role,
             decisions={k: v["decision"] for k, v in resume["decisions"].items()},
         )
@@ -346,7 +355,7 @@ class ApprovalService:
         )
         if not rows or any(str(row.status) == "pending" for row in rows):
             return None
-        if await self._paused_request(workflow) is None:
+        if await self.waiting_request(workflow) is None:
             return None
         decider = await db.get(User, rows[0].decided_by) if rows[0].decided_by else None
         verdicts = {"approved": "approve", "rejected": "reject", "modified": "modify"}
