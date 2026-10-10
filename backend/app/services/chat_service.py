@@ -174,6 +174,31 @@ def paused_request(final: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+async def stored_reply(rt: AgentRuntime, workflow: Workflow) -> ChatResponse | None:
+    """The reply a finished or paused workflow gave, rebuilt from its saved graph state.
+
+    The same shape as ``POST /api/chat`` (sources, actions, agent steps), so the website
+    can show an old conversation exactly like a new one. None when the state is gone
+    (for example with ``CHECKPOINTER=memory`` after a restart).
+    """
+    if str(workflow.status) == "running":
+        return None  # half-way through: there is no reply yet, only a partial state
+    config = graph_config(workflow.id, workflow.session_id or "", workflow.shop_id)
+    try:
+        snapshot = await rt.graph.aget_state(config)
+        values = dict(snapshot.values or {})
+        if not values:
+            return None
+        if snapshot.interrupts:
+            values["__interrupt__"] = list(snapshot.interrupts)
+        return build_response(values, workflow.id, workflow.session_id or "")
+    except Exception as exc:  # an old or unreadable state must not break the page
+        logger.warning(
+            "stored_reply_unavailable", workflow_id=workflow.id, error_type=type(exc).__name__
+        )
+        return None
+
+
 async def close_workflow(rt: AgentRuntime, workflow_id: str, response: ChatResponse) -> None:
     async with rt.session_factory() as db:
         workflow = await db.get(Workflow, workflow_id)

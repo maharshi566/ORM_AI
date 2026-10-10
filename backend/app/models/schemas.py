@@ -248,6 +248,8 @@ class TokenResponse(BaseModel):
     user_id: str
     shop_id: str | None
     role: str
+    name: str | None = None
+    shop_name: str | None = None
 
 
 class MeResponse(BaseModel):
@@ -255,6 +257,18 @@ class MeResponse(BaseModel):
     shop_id: str | None
     role: str | None
     authenticated: bool
+    name: str | None = None
+    shop_name: str | None = None
+
+
+class DevUserView(BaseModel):
+    """A demo user the development login offers (Phase 7: the login page's list)."""
+
+    user_id: str
+    name: str
+    role: str
+    shop_id: str | None
+    shop_name: str | None
 
 
 class MessageView(BaseModel):
@@ -324,6 +338,11 @@ class WorkflowResponse(BaseModel):
     approval: ApprovalRequestView | None = Field(
         default=None, description="When the workflow is waiting: what to decide"
     )
+    reply: ChatResponse | None = Field(
+        default=None,
+        description="The reply as POST /api/chat gave it (sources, actions, steps), rebuilt "
+        "from the saved graph state; empty when that state is gone",
+    )
 
 
 class UploadResponse(BaseModel):
@@ -377,3 +396,94 @@ class MetricsResponse(BaseModel):
     tools: list[ToolMetrics]
     approvals: dict[str, int]
     documents: dict[str, int]
+
+
+# ---------------------------------------------------------------- Phase 7 (lists for the UI)
+
+
+class ShopView(BaseModel):
+    shop_id: str
+    name: str
+    shop_type: str
+    locality: str
+    city: str
+
+
+class ShopListResponse(BaseModel):
+    shops: list[ShopView]
+
+
+class SessionListItem(BaseModel):
+    session_id: str
+    shop_id: str
+    user_id: str | None
+    title: str | None
+    created_at: str
+    last_active_at: str
+    workflows: int = Field(description="How many requests the conversation has")
+    last_status: str | None = Field(description="Status of its latest workflow")
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionListItem]
+
+
+class WorkflowListItem(WorkflowSummary):
+    shop_id: str
+    session_id: str | None
+
+
+class WorkflowListResponse(BaseModel):
+    workflows: list[WorkflowListItem]
+
+
+class ApprovalListItem(BaseModel):
+    """One action that waits for, or was decided by, a person."""
+
+    approval_id: str
+    workflow_id: str
+    shop_id: str
+    tool: str
+    description: str
+    arguments: dict[str, Any]
+    reason: str
+    required_role: str | None
+    approval_reasons: list[str] = []
+    estimate: str | None = None
+    confidence: float | None
+    policy_references: list[str] = []
+    status: str
+    user_query: str | None = Field(description="The request that led to it")
+    workflow_status: str | None
+    created_at: str
+    decided_by: str | None
+    decided_at: str | None
+    decision_note: str | None
+
+
+class ApprovalListResponse(BaseModel):
+    approvals: list[ApprovalListItem]
+    counts: dict[str, int] = Field(description="Approvals by status, in the same scope")
+
+
+class EvaluationCaseView(BaseModel):
+    case_id: str
+    category: str
+    passed: bool
+    scores: dict[str, float]
+    latency_ms: float | None
+    details: dict[str, Any]
+
+
+class EvaluationRunView(BaseModel):
+    run_id: str
+    created_at: str
+    models: str | None
+    cases: int
+    passed: int
+    scores: dict[str, float] = Field(description="Each score's average over the run's cases")
+    results: list[EvaluationCaseView]
+
+
+class EvaluationsResponse(BaseModel):
+    runs: list[EvaluationRunView]

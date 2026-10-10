@@ -24,18 +24,26 @@ for a person, for a given action and role, and to finish correctly once decided:
 
 The approval gate is that both the approval rate and the no-false-claims rate reach
 the minimum too.
+
+Each run can also be saved to the ``evaluations`` table, one row per case
+(``save_report``), so the admin page (Phase 7) shows the scores without anyone
+opening the report file.
 """
 
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from app.agents.common import compact
 from app.agents.validator import unsupported_claims
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 ROLE_RANK = {"staff": 1, "owner": 2}
 
@@ -51,10 +59,15 @@ class AgentCase:
     approval_tool: str | None = None  # an approval case: this action must wait for a person
     approval_role: str | None = None  # ... for at least this role
     approved_result: str | None = None  # done or failed, when a person approves (tests)
+    category: str = ""  # the dataset's grouping; "normal" or "approval" when not given
 
     @property
     def is_approval_case(self) -> bool:
         return self.approval_tool is not None
+
+    @property
+    def kind(self) -> str:
+        return self.category or ("approval" if self.is_approval_case else "normal")
 
 
 @dataclass
@@ -168,6 +181,7 @@ def load_agent_cases(path: Path) -> list[AgentCase]:
             approval_tool=(item.get("approval") or {}).get("tool"),
             approval_role=(item.get("approval") or {}).get("role"),
             approved_result=(item.get("approval") or {}).get("approved_result"),
+            category=str(item.get("category") or ""),
         )
         for item in data["cases"]
     ]
@@ -227,6 +241,70 @@ async def run_cases(
             state = {"errors": [f"{type(exc).__name__}: {exc}"]}
         outcomes.append(score(case, state, (time.perf_counter() - started) * 1000))
     return AgentEvalReport(outcomes=outcomes)
+
+
+def case_scores(outcome: CaseOutcome) -> dict[str, bool]:
+    """The checks one case is scored on (approval only for approval cases)."""
+    scores = {
+        "intent": outcome.intent_ok,
+        "records": outcome.records_ok,
+        "cited": outcome.documents_ok,
+        "grounded": outcome.grounded,
+        "no_false_claims": outcome.claims_ok,
+    }
+    if outcome.case.is_approval_case:
+        scores["approval"] = outcome.approval_ok
+    return scores
+
+
+def evaluation_rows(report: AgentEvalReport, run_id: str) -> list[dict[str, Any]]:
+    """One ``evaluations`` row per case: pass or not, each check, time and details."""
+    rows = []
+    for o in report.outcomes:
+        scores = case_scores(o)
+        rows.append(
+            {
+                "run_id": run_id,
+                "case_id": o.case.id[:40],
+                "category": o.case.kind[:40],
+                "passed": all(scores.values()),
+                "scores": {name: 1.0 if ok else 0.0 for name, ok in scores.items()},
+                "latency_ms": o.latency_ms,
+                "details": {
+                    "models": report.models or None,
+                    "shop_id": o.case.shop_id,
+                    "message": o.case.message,
+                    "intent": o.intent,
+                    "validation": o.validation,
+                    "outcome": o.outcome,
+                    "asked": [f"{tool} ({role})" for tool, role in o.asked],
+                    "cited": o.cited_documents,
+                    "missing_records": o.missing_records,
+                    "false_claims": o.false_claims,
+                    "errors": o.errors[:3],
+                    "input_tokens": o.input_tokens,
+                    "output_tokens": o.output_tokens,
+                    "answer": o.answer[:1500],
+                },
+            }
+        )
+    return rows
+
+
+async def save_report(
+    session_factory: "async_sessionmaker[AsyncSession]",
+    report: AgentEvalReport,
+    *,
+    run_id: str | None = None,
+) -> str:
+    """Store the run in the evaluations table; returns its run ID."""
+    from app.models import Evaluation
+
+    run_id = run_id or str(uuid.uuid4())
+    async with session_factory() as db:
+        db.add_all(Evaluation(**row) for row in evaluation_rows(report, run_id))
+        await db.commit()
+    return run_id
 
 
 def _mark(ok: bool) -> str:

@@ -101,7 +101,7 @@ async def test_a_dev_token_says_who_you_are(api) -> None:
     anonymous = (await api.get("/api/auth/me")).json()
     bad = await api.get("/api/auth/me", headers={"Authorization": "Bearer not.a.token"})
 
-    assert me == {
+    assert {k: me[k] for k in ("user_id", "shop_id", "role", "authenticated")} == {
         "user_id": "USR-003",
         "shop_id": "SHOP-002",
         "role": "owner",
@@ -469,6 +469,12 @@ async def test_the_openapi_document_lists_every_endpoint(api) -> None:
         ("/api/health", "get"),
         ("/api/metrics", "get"),
         ("/api/auth/dev-token", "post"),
+        ("/api/auth/dev-users", "get"),  # Phase 7: the lists the website needs
+        ("/api/shops", "get"),
+        ("/api/sessions", "get"),
+        ("/api/workflows", "get"),
+        ("/api/approvals", "get"),
+        ("/api/evaluations", "get"),
     ]:
         assert method in spec["paths"].get(path, {}), path
 

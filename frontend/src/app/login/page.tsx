@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { ChatWorkspace } from "@/components/chat/ChatWorkspace";
+import { LoginForm } from "./LoginForm";
 
-export const metadata: Metadata = { title: "Chat" };
+export const metadata: Metadata = { title: "Log in" };
 
-export default function ChatPage() {
+export default function LoginPage() {
   return (
     <Suspense fallback={<div className="flex-1" aria-busy="true" />}>
-      <ChatWorkspace />
+      <LoginForm />
     </Suspense>
   );
 }

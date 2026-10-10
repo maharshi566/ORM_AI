@@ -1,9 +1,12 @@
 """Read-only views of what the agents did: conversations, workflows and metrics.
 
 These power ``GET /api/sessions/{id}``, ``GET /api/workflows/{id}`` and
-``GET /api/metrics`` (the frontend's workflow panel and admin page, Phase 7). They
-only read. Every view is limited to one shop when the caller is logged in as a shop
-user; admins (and local development without a token) see everything.
+``GET /api/metrics`` (Phase 6), and the lists the frontend needs (Phase 7):
+``GET /api/sessions`` (a user's recent conversations), ``GET /api/workflows`` (recent
+requests), ``GET /api/approvals`` (the approvals inbox) and ``GET /api/evaluations``
+(evaluation runs). They only read. Every view is limited to one shop when the caller
+is logged in as a shop user; admins (and local development without a token) see
+everything, or one shop when they ask for it.
 """
 
 from collections import Counter, defaultdict
@@ -13,27 +16,41 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agents.human_review import describe
 from app.core.auth import Principal, check_shop
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import ForbiddenError, NotFoundError
 from app.models import (
     AgentRun,
     Approval,
     ChatSession,
     Document,
     DocumentChunk,
+    Evaluation,
     Message,
+    Shop,
     ToolCall,
     Workflow,
 )
 from app.models.schemas import (
     AgentMetrics,
     AgentRunView,
+    ApprovalListItem,
+    ApprovalListResponse,
     ApprovalRecordView,
+    EvaluationCaseView,
+    EvaluationRunView,
+    EvaluationsResponse,
     MessageView,
     MetricsResponse,
+    SessionListItem,
+    SessionListResponse,
     SessionResponse,
+    ShopListResponse,
+    ShopView,
     ToolCallView,
     ToolMetrics,
+    WorkflowListItem,
+    WorkflowListResponse,
     WorkflowResponse,
     WorkflowSummary,
 )
@@ -287,3 +304,251 @@ async def metrics_view(
         approvals={"pending": 0, "approved": 0, "rejected": 0, "modified": 0, **approvals},
         documents={"documents": int(documents), "chunks": int(chunks)},
     )
+
+
+# ---------------------------------------------------------------- Phase 7: lists
+
+
+def scope_shop(principal: Principal | None, shop_id: str | None) -> str | None:
+    """The one shop a list covers, or None for every shop.
+
+    A shop user always gets their own shop (asking for another is refused); an admin,
+    or local development without a token, gets the shop asked for, or every shop.
+    """
+    if principal is not None and principal.role != "admin":
+        if shop_id is not None:
+            check_shop(principal, shop_id)
+        return principal.shop_id
+    return shop_id
+
+
+async def list_shops(
+    factory: async_sessionmaker[AsyncSession], principal: Principal | None
+) -> ShopListResponse:
+    """The shops the caller can ask about: their own, or every shop for an admin."""
+    shop = scope_shop(principal, None)
+    async with factory() as db:
+        query = select(Shop).order_by(Shop.id)
+        if shop:
+            query = query.where(Shop.id == shop)
+        rows = (await db.scalars(query)).all()
+    return ShopListResponse(
+        shops=[
+            ShopView(
+                shop_id=s.id,
+                name=s.name,
+                shop_type=str(s.shop_type),
+                locality=s.locality,
+                city=s.city,
+            )
+            for s in rows
+        ]
+    )
+
+
+async def list_sessions(
+    factory: async_sessionmaker[AsyncSession],
+    principal: Principal | None,
+    *,
+    shop_id: str | None = None,
+    limit: int = 20,
+) -> SessionListResponse:
+    """The caller's recent conversations, newest first.
+
+    A shop user sees only the conversations they started; an admin sees everyone's
+    (in one shop when ``shop_id`` is given).
+    """
+    shop = scope_shop(principal, shop_id)
+    async with factory() as db:
+        query = select(ChatSession).order_by(ChatSession.last_active_at.desc()).limit(limit)
+        if shop:
+            query = query.where(ChatSession.shop_id == shop)
+        if principal is not None and principal.role != "admin":
+            query = query.where(ChatSession.user_id == principal.user_id)
+        sessions = (await db.scalars(query)).all()
+        ids = [s.id for s in sessions]
+        counts: dict[str, int] = {}
+        latest: dict[str, str] = {}
+        if ids:
+            rows = (
+                await db.execute(
+                    select(Workflow.session_id, Workflow.status, Workflow.created_at)
+                    .where(Workflow.session_id.in_(ids))
+                    .order_by(Workflow.created_at)
+                )
+            ).all()
+            for row in rows:
+                counts[row.session_id] = counts.get(row.session_id, 0) + 1
+                latest[row.session_id] = str(row.status)
+    return SessionListResponse(
+        sessions=[
+            SessionListItem(
+                session_id=s.id,
+                shop_id=s.shop_id,
+                user_id=s.user_id,
+                title=s.title,
+                created_at=_iso(s.created_at) or "",
+                last_active_at=_iso(s.last_active_at) or "",
+                workflows=counts.get(s.id, 0),
+                last_status=latest.get(s.id),
+            )
+            for s in sessions
+        ]
+    )
+
+
+async def list_workflows(
+    factory: async_sessionmaker[AsyncSession],
+    principal: Principal | None,
+    *,
+    shop_id: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+) -> WorkflowListResponse:
+    """Recent requests, newest first (the admin page's list)."""
+    shop = scope_shop(principal, shop_id)
+    async with factory() as db:
+        query = select(Workflow).order_by(Workflow.created_at.desc(), Workflow.id).limit(limit)
+        if shop:
+            query = query.where(Workflow.shop_id == shop)
+        if status:
+            query = query.where(Workflow.status == status)
+        rows = (await db.scalars(query)).all()
+    return WorkflowListResponse(
+        workflows=[
+            WorkflowListItem(**_summary(w).model_dump(), shop_id=w.shop_id, session_id=w.session_id)
+            for w in rows
+        ]
+    )
+
+
+async def list_approvals(
+    factory: async_sessionmaker[AsyncSession],
+    principal: Principal | None,
+    *,
+    shop_id: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+) -> ApprovalListResponse:
+    """The approvals inbox: what waits for a person (or was decided), newest first."""
+    shop = scope_shop(principal, shop_id)
+    async with factory() as db:
+        query = (
+            select(Approval, Workflow.user_query, Workflow.status)
+            .join(Workflow, Workflow.id == Approval.workflow_id, isouter=True)
+            .order_by(Approval.created_at.desc(), Approval.id)
+            .limit(limit)
+        )
+        count_query = select(Approval.status, func.count()).group_by(Approval.status)
+        if shop:
+            query = query.where(Approval.shop_id == shop)
+            count_query = count_query.where(Approval.shop_id == shop)
+        if status:
+            query = query.where(Approval.status == status)
+        rows = (await db.execute(query)).all()
+        counts = {str(s): int(n) for s, n in await db.execute(count_query)}
+    items = []
+    for approval, user_query, workflow_status in rows:
+        proposed = approval.proposed_action or {}
+        arguments = {
+            k: v for k, v in (proposed.get("arguments") or {}).items() if k != "idempotency_key"
+        }
+        items.append(
+            ApprovalListItem(
+                approval_id=approval.id,
+                workflow_id=approval.workflow_id,
+                shop_id=approval.shop_id,
+                tool=approval.action_type,
+                description=describe({"tool": approval.action_type, "arguments": arguments}),
+                arguments=arguments,
+                reason=approval.reason,
+                required_role=proposed.get("required_role"),
+                approval_reasons=list(proposed.get("approval_reasons") or []),
+                estimate=proposed.get("estimate"),
+                confidence=approval.confidence,
+                policy_references=[str(p) for p in approval.policy_refs or []],
+                status=str(approval.status),
+                user_query=user_query,
+                workflow_status=str(workflow_status) if workflow_status else None,
+                created_at=_iso(approval.created_at) or "",
+                decided_by=approval.decided_by,
+                decided_at=_iso(approval.decided_at),
+                decision_note=approval.decision_note,
+            )
+        )
+    return ApprovalListResponse(
+        approvals=items,
+        counts={"pending": 0, "approved": 0, "modified": 0, "rejected": 0, **counts},
+    )
+
+
+async def list_evaluations(
+    factory: async_sessionmaker[AsyncSession], principal: Principal | None, *, limit: int = 5
+) -> EvaluationsResponse:
+    """The latest evaluation runs (``python -m scripts.eval_agent`` saves them).
+
+    Evaluation cases cover many shops, so only admins (or local development without a
+    token) see them.
+    """
+    if principal is not None and principal.role != "admin":
+        raise ForbiddenError(
+            "Evaluation results cover every shop, so only an admin can see them "
+            "(in development, log in as USR-101)."
+        )
+    async with factory() as db:
+        latest = (
+            select(Evaluation.run_id, func.max(Evaluation.created_at).label("at"))
+            .group_by(Evaluation.run_id)
+            .order_by(func.max(Evaluation.created_at).desc())
+            .limit(limit)
+        )
+        runs = (await db.execute(latest)).all()
+        run_ids = [r.run_id for r in runs]
+        rows = (
+            (
+                await db.scalars(
+                    select(Evaluation).where(Evaluation.run_id.in_(run_ids)).order_by(Evaluation.id)
+                )
+            ).all()
+            if run_ids
+            else []
+        )
+    by_run: dict[str, list[Evaluation]] = defaultdict(list)
+    for row in rows:
+        by_run[row.run_id].append(row)
+    views = []
+    for run in runs:
+        cases = by_run[run.run_id]
+        totals: dict[str, list[float]] = defaultdict(list)
+        for case in cases:
+            for name, value in (case.scores or {}).items():
+                if isinstance(value, int | float) and not isinstance(value, bool):
+                    totals[name].append(float(value))
+                elif isinstance(value, bool):
+                    totals[name].append(1.0 if value else 0.0)
+        views.append(
+            EvaluationRunView(
+                run_id=run.run_id,
+                created_at=_iso(run.at) or "",
+                models=next(((c.details or {}).get("models") for c in cases if c.details), None),
+                cases=len(cases),
+                passed=sum(1 for c in cases if c.passed),
+                scores={k: round(sum(v) / len(v), 3) for k, v in totals.items() if v},
+                results=[
+                    EvaluationCaseView(
+                        case_id=c.case_id,
+                        category=c.category,
+                        passed=c.passed,
+                        scores={
+                            k: float(v)
+                            for k, v in (c.scores or {}).items()
+                            if isinstance(v, int | float)
+                        },
+                        latency_ms=c.latency_ms,
+                        details=c.details or {},
+                    )
+                    for c in cases
+                ],
+            )
+        )
+    return EvaluationsResponse(runs=views)

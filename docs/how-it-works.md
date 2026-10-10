@@ -1,4 +1,4 @@
-# How ORM_AI works (Phases 0–6)
+# How ORM_AI works (Phases 0–7)
 
 This guide explains what is built so far and how the pieces fit together. Read it
 top to bottom once. After that, use the other guides as references:
@@ -8,6 +8,7 @@ top to bottom once. After that, use the other guides as references:
 - [rag.md](rag.md): knowledge search, from documents to cited passages
 - [agents.md](agents.md): the agents, how a question is answered, and choosing a model
 - [api.md](api.md): every endpoint, logging in, the progress stream, uploads, errors and limits
+- [../frontend/README.md](../frontend/README.md): the website: its pages, the approval example, how it talks to the API
 - [supabase.md](supabase.md): using Supabase as the database
 - [omniroute.md](omniroute.md): using OmniRoute (or another gateway) instead of a plain OpenAI key
 
@@ -341,8 +342,55 @@ sequenceDiagram
 
 Every endpoint, with examples, is in [api.md](api.md).
 
-## 10. What comes next
+## 10. The website (Phase 7)
+
+The website is a Next.js app in `frontend/`. It holds no keys and no business logic: it
+logs in, calls the API, and shows what the agents did, so a person can follow every step
+and decide what changes.
+
+- **Logging in.** Locally, the login page lists the demo users and asks the backend for a
+  token (`POST /api/auth/dev-token`). The browser keeps the token and sends it with every
+  call; the backend still checks every call, so the website cannot reach another shop
+  even if someone edits it.
+- **Asking.** The chat sends the question to `POST /api/chat/stream`. As the events
+  arrive, the stage rail on the right lights up: understand the request, look up records
+  and rules, investigate, ask a person, carry out what was approved, write the reply,
+  check the reply. The reply's citations become chips that open the cited passage.
+- **Deciding.** When the workflow pauses, the chat shows an approval slip: the action, the
+  reason, the estimate, the evidence and the rules. Approve, Modify (change the details,
+  never the record) or Reject goes to `POST /api/approval/{workflow_id}`; the workflow
+  resumes, and the slip is stamped with the decision and the tool's real result. The
+  approvals inbox shows the same slip for everything waiting in the shop.
+- **Looking back.** Old conversations reload from `GET /api/sessions/{id}`, and each
+  request's full reply from `GET /api/workflows/{id}` (rebuilt from the saved graph
+  state). The admin page reads `/api/metrics`, `/api/workflows` and `/api/evaluations`
+  (each evaluation run is saved by `python -m scripts.eval_agent`).
+
+```mermaid
+sequenceDiagram
+    participant P as Person
+    participant W as Website
+    participant A as API
+    participant G as Agent graph
+    P->>W: asks for a refund
+    W->>A: POST /api/chat/stream (token)
+    A->>G: run
+    G-->>W: stage events (rail lights up)
+    G-->>W: approval_requested, result (paused)
+    W->>P: approval slip
+    P->>W: Approve
+    W->>A: POST /api/approval/{id}
+    A->>G: resume: Action agent runs the tool
+    A-->>W: reply: what the tool confirmed
+    W->>P: stamped slip + reply
+```
+
+[frontend/README.md](../frontend/README.md) walks through the full refund example and every
+page.
+
+## 11. What comes next
 
 | Phase | Builds on | Adds |
 | --- | --- | --- |
-| 7 Frontend | the chat response (sources, steps, the `approval` block), `/api/chat/stream`, `/api/workflows/{id}`, `/api/metrics`, logins | Chat, workflow, sources, approval (Approve / Reject / Modify buttons) and admin pages |
+| 8 Evaluation | the 15-case evaluation, the `evaluations` table and the admin page | 40 cases (normal, ambiguous, missing information, tool failure, prompt injection, policy conflict, human approval), more scores, one pinned model, a report |
+| 9 Deploy | Docker, the production settings checks, `NEXT_PUBLIC_API_URL` | The backend on Render or Railway, the website on Vercel, a demo login for the public demo |

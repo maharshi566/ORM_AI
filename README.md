@@ -2,7 +2,7 @@
 
 A multi-agent AI assistant that helps local shopkeepers keep their records organised and detailed.
 
-> **Status:** Phases 0–6 are done: the API foundations, database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, knowledge search (RAG) with citations, the multi-agent assistant behind `POST /api/chat` (LangGraph, with checkpoints and conversation memory), human approval (a policy gate, a pause until a person decides, an Action agent that runs only what was approved, input and output guardrails, a 15-case evaluation), and the full API: logins, a live progress stream, rate limits, document uploads and read-back of every workflow ([docs/api.md](docs/api.md)). The models can be reached through OpenAI, Google Gemini (free tier), OpenRouter or a gateway such as [OmniRoute](docs/omniroute.md). The frontend (Phase 7) comes next. See [Roadmap](#roadmap).
+> **Status:** Phases 0–7 are done: the API foundations, database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, knowledge search (RAG) with citations, the multi-agent assistant behind `POST /api/chat` (LangGraph, with checkpoints and conversation memory), human approval (a policy gate, a pause until a person decides, an Action agent that runs only what was approved, input and output guardrails, a 15-case evaluation), the full API: logins, a live progress stream, rate limits, document uploads and read-back of every workflow ([docs/api.md](docs/api.md)), and the website: a chat that shows each agent at work, the sources it cited and an approval slip to approve, change or reject what it proposes, an approvals inbox, and an admin page with timings, errors and evaluation scores ([frontend/README.md](frontend/README.md)). The models can be reached through OpenAI, Google Gemini (free tier), OpenRouter or a gateway such as [OmniRoute](docs/omniroute.md). The 40-case evaluation (Phase 8) comes next. See [Roadmap](#roadmap).
 >
 > **New here? Read [docs/how-it-works.md](docs/how-it-works.md) first.**
 
@@ -20,7 +20,7 @@ ORM_AI gives shopkeepers one assistant that:
 **Primary users:** owners and staff of local shops.
 **Working scope:** stock, sales, supplier orders and customer credit (*udhaar*). Each shop sees only its own records; suppliers are shared by all shops.
 
-## Architecture (target)
+## Architecture
 
 ```mermaid
 flowchart TD
@@ -77,12 +77,12 @@ ORM_AI/
 │   ├── Dockerfile
 │   ├── requirements.txt / requirements-dev.txt
 │   └── pyproject.toml         Ruff and pytest settings
-├── frontend/
+├── frontend/                  the website (Next.js 16), see frontend/README.md
 │   └── src/
-│       ├── app/               pages: /, /chat, /approvals, /admin
-│       ├── components/        SiteHeader, BackendStatus, ComingSoon
-│       ├── lib/api.ts         backend client (uses NEXT_PUBLIC_API_URL)
-│       └── types/api.ts       response types
+│       ├── app/               pages: /, /login, /chat, /approvals, /admin, /workflows/[id]
+│       ├── components/        chat workspace, approval slip, approvals inbox, admin dashboard, ...
+│       ├── lib/               backend client, login, live-progress reader, chat model (+ tests)
+│       └── types/api.ts       the API's shapes
 ├── docs/                      how it works, API, agents, database, tools, RAG, Supabase, OmniRoute
 ├── docker/postgres/init/      creates the test database on first start
 ├── .github/workflows/ci.yml   lint, tests and build on every push
@@ -93,7 +93,7 @@ ORM_AI/
 ## Prerequisites (Windows)
 
 - [Python 3.12](https://www.python.org/downloads/windows/) (3.12.10 is the last 3.12 with a Windows installer; tick "Add python.exe to PATH")
-- [Node.js](https://nodejs.org/) LTS, version 20.9 or newer
+- [Node.js](https://nodejs.org/) LTS, version 22.18 or newer (24 recommended: `winget install OpenJS.NodeJS.LTS`, then close and reopen Cursor)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 - [Git](https://git-scm.com/download/win)
 
@@ -139,7 +139,7 @@ To look inside the database in your browser: `docker compose --profile tools up 
 
 If PowerShell blocks `Activate.ps1`, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 
-**4. Start the frontend** (in a second terminal)
+**4. Start the website** (in a second terminal: click **+** in Cursor's terminal panel)
 
 ```powershell
 cd frontend
@@ -148,7 +148,7 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:3000>. The Backend status card should say **All systems up**.
+Open <http://localhost:3000>. The server card should say **Running**. Click **Log in**, pick a demo user (Sunita Rao, staff of SHOP-001, for example), and ask something in the chat. [frontend/README.md](frontend/README.md) explains every page.
 
 **Or run the whole backend stack in Docker** (migrations run automatically on start)
 
@@ -163,13 +163,14 @@ docker compose exec backend python -m scripts.seed
 
 ```powershell
 cd backend
-pytest                 # about 615 tests, no API key needed (+7 PostgreSQL tests when TEST_DATABASE_URL is set)
+pytest                 # about 630 tests, no API key needed (+7 PostgreSQL tests when TEST_DATABASE_URL is set)
 ruff check .
 ruff format --check .
 
 cd ..\frontend
 npm run lint
 npm run typecheck
+npm test               # the website's own logic (live progress, conversations, redirects)
 npm run build
 ```
 
@@ -204,7 +205,13 @@ The full guide, with examples and every error code, is [docs/api.md](docs/api.md
 | POST | `/api/approval/{workflow_id}` | Approve, change or reject the actions a paused workflow is waiting on, then resume it ([docs/agents.md](docs/agents.md#9-approvals-actions-and-guardrails-phase-5)) |
 | GET | `/api/approval/{workflow_id}` | What is waiting for approval, and what was decided |
 | GET | `/api/sessions/{session_id}` | A conversation: its messages and workflows |
-| GET | `/api/workflows/{workflow_id}` | One workflow: every agent step, tool call and approval |
+| GET | `/api/sessions` | Your recent conversations |
+| GET | `/api/workflows/{workflow_id}` | One workflow: every agent step, tool call and approval, and the reply as the chat showed it |
+| GET | `/api/workflows` | Recent requests, optionally by status |
+| GET | `/api/approvals` | The approvals inbox: what waits for a person, and what was decided |
+| GET | `/api/shops` | The shops you can ask about |
+| GET | `/api/evaluations` | The latest evaluation runs, case by case (admins) |
+| GET | `/api/auth/dev-users` | The demo users the development login accepts (on your own computer only) |
 | GET | `/api/metrics` | Counts and timings per agent and tool, for the admin page |
 | GET | `/api/knowledge/search?q=…` | Search the shop's documents; returns passages with citations ([docs/rag.md](docs/rag.md)) |
 | POST | `/api/documents/upload` | Add a .md, .txt or .pdf document to the knowledge base |
@@ -232,13 +239,13 @@ Every response carries an `X-Request-ID` header, and every error uses one shape:
 | **4 Agent graph** | 6–7 | LangGraph state graph, the agents, database checkpointer, memory, `/api/chat` ✅ |
 | **5 Approval + guardrails** | 8 | Policy gate, `interrupt()` approval, Action agent, validator BLOCK, input guardrails, PII masking ✅ |
 | **6 API** | 9 | All endpoints, logins, SSE progress stream, rate limits, uploads, records and metrics ✅ |
-| 7 Frontend | 10 | Chat, workflow, sources, approval and admin pages |
+| **7 Frontend** | 10 | Login, chat with live stages, sources, approval slip, approvals inbox, admin page, request records ✅ |
 | 8 Evaluation | 11 | 40-case evaluation set, metrics, tracing, report |
 | 9 Deploy | 12 | Vercel + Render/Railway, full README, demo |
 
 ## Security notes
 
-- Secrets live only in `.env` (git-ignored). The frontend gets `NEXT_PUBLIC_API_URL` and nothing else.
+- Secrets live only in `.env` (git-ignored). The frontend gets `NEXT_PUBLIC_API_URL` and nothing else. The browser keeps only its login token (in `localStorage`); replies are rendered from Markdown without raw HTML, so a reply cannot run code in the page.
 - `.cursorignore` keeps `.env` files away from Cursor's AI features. Don't paste keys into an AI chat, and don't let an agent run commands that print `.env`.
 - Logs mask keys that look like passwords, tokens or API keys.
 - Health errors show only the exception type, never hosts or credentials.

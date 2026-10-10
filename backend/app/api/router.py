@@ -12,4 +12,4 @@ api_router.include_router(approval.router)  # Phase 5: POST/GET /approval/{workf
 api_router.include_router(auth.router)  # Phase 6: POST /auth/dev-token, GET /auth/me
 api_router.include_router(agent.router)  # Phase 6: POST /agent/run
 api_router.include_router(documents.router)  # Phase 6: upload, ingest, ingest/{job_id}
-api_router.include_router(records.router)  # Phase 6: sessions, workflows, metrics
+api_router.include_router(records.router)  # Phase 6-7: sessions, workflows, metrics, lists

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { API_URL, getHealth } from "@/lib/api";
+import { API_URL, errorMessage, getHealth } from "@/lib/api";
 import type { HealthResponse } from "@/types/api";
 
 type Status =
@@ -11,18 +11,15 @@ type Status =
   | { kind: "unreachable"; message: string; checkedAt: Date };
 
 const BADGE: Record<Status["kind"], { label: string; className: string }> = {
-  loading: { label: "Checking…", className: "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300" },
-  ok: { label: "All systems up", className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" },
-  degraded: { label: "Degraded", className: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" },
-  unreachable: { label: "Backend unreachable", className: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300" },
+  loading: { label: "Checking", className: "bg-sheet-2 text-ink-2" },
+  ok: { label: "Running", className: "bg-stamp-soft text-stamp" },
+  degraded: { label: "Partly down", className: "bg-amber-soft text-amber" },
+  unreachable: { label: "Not reachable", className: "bg-khata-soft text-khata" },
 };
 
-const LABELS: Record<string, string> = { database: "PostgreSQL", redis: "Redis" };
+const LABELS: Record<string, string> = { database: "Records (PostgreSQL)", redis: "Conversation memory (Redis)" };
 
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : "Unknown error";
-}
-
+/** Whether the backend and the services it needs are up (GET /api/health). */
 export function BackendStatus() {
   const [status, setStatus] = useState<Status>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -33,7 +30,7 @@ export function BackendStatus() {
       (health) => setStatus({ kind: health.status, health, checkedAt: new Date() }),
       (error: unknown) => {
         if (controller.signal.aborted) return;
-        setStatus({ kind: "unreachable", message: describeError(error), checkedAt: new Date() });
+        setStatus({ kind: "unreachable", message: errorMessage(error), checkedAt: new Date() });
       },
     );
     return () => controller.abort();
@@ -42,28 +39,24 @@ export function BackendStatus() {
   const badge = BADGE[status.kind];
 
   return (
-    <section className="rounded-xl border border-stone-200 bg-white p-6 dark:border-stone-800 dark:bg-stone-900">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold">Backend status</h2>
-          <p className="mt-1 font-mono text-xs text-stone-500 break-all">{API_URL}/api/health</p>
-        </div>
-        <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge.className}`}>{badge.label}</span>
+    <section aria-labelledby="backend-status" className="rounded-lg border border-rule bg-sheet p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="backend-status" className="font-serif text-base font-bold">
+          The ORM_AI server
+        </h2>
+        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge.className}`}>{badge.label}</span>
       </div>
 
       {status.kind === "ok" || status.kind === "degraded" ? (
-        <ul className="mt-5 divide-y divide-stone-100 dark:divide-stone-800">
+        <ul className="mt-4 divide-y divide-rule text-sm">
           {Object.entries(status.health.checks).map(([name, dependency]) => (
-            <li key={name} className="flex items-center justify-between py-2.5 text-sm">
+            <li key={name} className="flex items-center justify-between gap-3 py-2">
               <span className="flex items-center gap-2">
-                <span
-                  aria-hidden
-                  className={`h-2 w-2 rounded-full ${dependency.status === "ok" ? "bg-emerald-500" : "bg-red-500"}`}
-                />
+                <span aria-hidden className={`h-2 w-2 rounded-full ${dependency.status === "ok" ? "bg-stamp" : "bg-khata"}`} />
                 {LABELS[name] ?? name}
               </span>
-              <span className="text-stone-500">
-                {dependency.status === "ok" ? `${dependency.latency_ms ?? "–"} ms` : dependency.error}
+              <span className="text-ink-3 tabular-nums">
+                {dependency.status === "ok" ? `${dependency.latency_ms ?? "–"} ms` : (dependency.error ?? "down")}
               </span>
             </li>
           ))}
@@ -71,29 +64,21 @@ export function BackendStatus() {
       ) : null}
 
       {status.kind === "unreachable" ? (
-        <p className="mt-5 text-sm text-stone-600 dark:text-stone-400">
-          Could not reach the API ({status.message}). Start it with{" "}
-          <code className="rounded bg-stone-100 px-1.5 py-0.5 text-xs dark:bg-stone-800">uvicorn app.main:app --reload</code>{" "}
-          from the <code className="rounded bg-stone-100 px-1.5 py-0.5 text-xs dark:bg-stone-800">backend</code> folder.
+        <p className="mt-4 text-sm text-ink-2">
+          {status.message} Start it from the <code className="rounded bg-sheet-2 px-1">backend</code> folder with{" "}
+          <code className="rounded bg-sheet-2 px-1">uvicorn app.main:app --reload</code>.
         </p>
       ) : null}
 
-      <div className="mt-5 flex items-center justify-between text-xs text-stone-500">
-        <span>
-          {status.kind === "loading"
-            ? "Contacting the API…"
-            : `Checked at ${status.checkedAt.toLocaleTimeString()}`}
-          {status.kind === "ok" || status.kind === "degraded"
-            ? ` · ${status.health.app} ${status.health.version} (${status.health.environment})`
-            : ""}
-        </span>
+      <div className="mt-4 flex items-center justify-between gap-3 text-xs text-ink-3">
+        <span className="min-w-0 break-all">{status.kind === "loading" ? "Asking…" : API_URL}</span>
         <button
           type="button"
           onClick={() => {
             setStatus({ kind: "loading" });
             setAttempt((n) => n + 1);
           }}
-          className="rounded-md border border-stone-300 px-3 py-1.5 font-medium text-stone-700 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-200 dark:hover:bg-stone-800"
+          className="shrink-0 rounded-md border border-rule px-2.5 py-1 font-medium text-ink-2 hover:text-ink"
         >
           Check again
         </button>

@@ -1,26 +1,208 @@
 @import "tailwindcss";
 
+/*
+ * ORM_AI's look comes from the shop ledger (bahi-khata): cool ruled paper, navy ink,
+ * the red of the ledger's cloth binding and its margin line, and a green rubber stamp
+ * for what was approved and done. Colours are tokens, so dark mode only swaps values.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --paper: #eef2ef;
+  --sheet: #ffffff;
+  --sheet-2: #f6f8f6;
+  --ink: #1a2b48;
+  --ink-2: #4a5a70;
+  --ink-3: #6e7b8b;
+  --rule: #d3ddd7;
+  --rule-strong: #a9bbb1;
+  --khata: #a3192b;
+  --khata-soft: #f8e5e7;
+  --stamp: #1e7148;
+  --stamp-soft: #e1f1e7;
+  --amber: #8f5300;
+  --amber-soft: #fbefd9;
+  --focus: #2f57c4;
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --paper: #0f1720;
+    --sheet: #15202b;
+    --sheet-2: #1a2632;
+    --ink: #e3e9f1;
+    --ink-2: #aab7c6;
+    --ink-3: #8593a4;
+    --rule: #26333f;
+    --rule-strong: #3a4b5a;
+    --khata: #f07583;
+    --khata-soft: #3b1b22;
+    --stamp: #63c995;
+    --stamp-soft: #13301f;
+    --amber: #e8ad55;
+    --amber-soft: #33260f;
+    --focus: #8fb0ff;
+    color-scheme: dark;
   }
 }
 
+@theme inline {
+  --color-paper: var(--paper);
+  --color-sheet: var(--sheet);
+  --color-sheet-2: var(--sheet-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+  --color-khata: var(--khata);
+  --color-khata-soft: var(--khata-soft);
+  --color-stamp: var(--stamp);
+  --color-stamp-soft: var(--stamp-soft);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-focus: var(--focus);
+  --font-sans: "Mukta", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Martel", ui-serif, Georgia, serif;
+}
+
+html {
+  background: var(--paper);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+/* Keyboard focus is always visible, in one colour everywhere. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The conversation is written on a ledger sheet: a double red margin line on the left. */
+.ledger-margin {
+  --margin-line: 1.6rem;
+  background-image:
+    linear-gradient(to right, transparent var(--margin-line), var(--khata) var(--margin-line), var(--khata) calc(var(--margin-line) + 1px), transparent calc(var(--margin-line) + 1px)),
+    linear-gradient(to right, transparent calc(var(--margin-line) + 0.3rem), var(--khata) calc(var(--margin-line) + 0.3rem), var(--khata) calc(var(--margin-line) + 0.3rem + 1px), transparent calc(var(--margin-line) + 0.3rem + 1px));
+  background-repeat: no-repeat;
+}
+@media (min-width: 640px) {
+  .ledger-margin {
+    --margin-line: 3.25rem;
+  }
+}
+
+/* An approval slip's torn, perforated top edge. */
+.perforated {
+  position: relative;
+}
+.perforated::before {
+  content: "";
+  position: absolute;
+  inset: -5px 0 auto 0;
+  height: 10px;
+  background: radial-gradient(circle at 5px 5px, var(--paper) 3.5px, transparent 4px) repeat-x;
+  background-size: 14px 10px;
+}
+
+/* The rubber stamp lands once, when a person decides. */
+@keyframes stamp-in {
+  0% {
+    opacity: 0;
+    transform: rotate(-9deg) scale(1.6);
+  }
+  60% {
+    opacity: 1;
+    transform: rotate(-9deg) scale(0.94);
+  }
+  100% {
+    opacity: 0.92;
+    transform: rotate(-9deg) scale(1);
+  }
+}
+.stamp {
+  animation: stamp-in 420ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  transform: rotate(-9deg);
+  mix-blend-mode: multiply;
+}
+@media (prefers-color-scheme: dark) {
+  .stamp {
+    mix-blend-mode: normal;
+  }
+}
+
+/* The stage that is working right now breathes; nothing else on the page moves. */
+@keyframes working {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--khata) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--khata) 0%, transparent);
+  }
+}
+.working {
+  animation: working 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stamp,
+  .working {
+    animation: none;
+  }
+}
+
+/* The assistant's Markdown replies. */
+.prose-reply {
+  overflow-wrap: anywhere;
+}
+.prose-reply p {
+  margin: 0 0 0.6em;
+}
+.prose-reply p:last-child {
+  margin-bottom: 0;
+}
+.prose-reply ul,
+.prose-reply ol {
+  margin: 0.2em 0 0.8em;
+  padding-left: 1.25em;
+}
+.prose-reply ul {
+  list-style: disc;
+}
+.prose-reply ol {
+  list-style: decimal;
+}
+.prose-reply li {
+  margin: 0.15em 0;
+}
+.prose-reply li::marker {
+  color: var(--ink-3);
+}
+.prose-reply strong {
+  font-weight: 700;
+}
+.prose-reply code {
+  font-size: 0.92em;
+  background: var(--sheet-2);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0 0.3em;
+}
+.prose-reply table {
+  border-collapse: collapse;
+  margin: 0.4em 0 0.8em;
+  font-size: 0.95em;
+}
+.prose-reply th,
+.prose-reply td {
+  border-bottom: 1px solid var(--rule);
+  padding: 0.25em 0.75em 0.25em 0;
+  text-align: left;
 }

@@ -1,4 +1,4 @@
-# The ORM_AI API (Phase 6)
+# The ORM_AI API (Phases 6 and 7)
 
 Every endpoint, what it needs and what it returns. The quickest way to try them is the
 interactive page at <http://localhost:8000/docs> (start the backend first, see the
@@ -70,7 +70,8 @@ All paths start with `/api`. "Login" says what a token is needed for when
 | --- | --- | --- | --- | --- |
 | GET | `/health` | 200 when PostgreSQL and Redis answer, 503 with details when one is down | no | – |
 | POST | `/auth/dev-token` | A token for a demo user (local and test only) | no | login |
-| GET | `/auth/me` | Who the token says you are | no | – |
+| GET | `/auth/me` | Who the token says you are (with your name and shop's name) | no | – |
+| GET | `/auth/dev-users` | The demo users the development login accepts (local and test only) | no | login |
 | POST | `/chat` | Ask about one shop; the answer with sources, actions, tool calls and agent steps | yes | agent |
 | POST | `/chat/stream` | The same, with live progress as Server-Sent Events | yes | agent |
 | GET | `/chat/graph` | The agent graph as a Mermaid diagram | no | – |
@@ -78,8 +79,13 @@ All paths start with `/api`. "Login" says what a token is needed for when
 | POST | `/approval/{workflow_id}` | Approve, change or reject what a paused workflow waits on, then resume it | yes | agent |
 | GET | `/approval/{workflow_id}` | What is waiting, and what was decided | yes | – |
 | GET | `/sessions/{session_id}` | A conversation: its messages and workflows | yes | – |
-| GET | `/workflows/{workflow_id}` | One workflow: every agent step, tool call and approval | yes | – |
+| GET | `/sessions` | Your recent conversations (Phase 7) | yes | – |
+| GET | `/workflows/{workflow_id}` | One workflow: every agent step, tool call and approval, and the reply as the chat showed it | yes | – |
+| GET | `/workflows` | Recent requests, newest first; `?status=` filters (Phase 7) | yes | – |
+| GET | `/approvals` | The approvals inbox; `?status=pending` for what waits (Phase 7) | yes | – |
+| GET | `/shops` | The shops you can ask about (Phase 7) | yes | – |
 | GET | `/metrics` | Counts and timings for the admin page | yes | – |
+| GET | `/evaluations` | The latest evaluation runs, case by case (admins; Phase 7) | yes (admin) | – |
 | GET | `/knowledge/search?q=…` | Search the documents; passages with citations ([rag.md](rag.md)) | yes | – |
 | POST | `/documents/upload` | Add a .md, .txt or .pdf document | yes | upload |
 | POST | `/documents/ingest` | Re-ingest the knowledge base and the uploads, in the background | yes (owner) | upload |
@@ -164,11 +170,37 @@ These only read. They feed the frontend's workflow panel and admin page (Phase 7
   order) and a summary of each workflow it started.
 - `GET /api/workflows/{workflow_id}`: status, the question and the final answer, every
   agent step (model, time, tokens, summary, error), every tool call (arguments, status,
-  error code, time), the approvals, and, while it waits, the `approval` block.
+  error code, time), the approvals, and, while it waits, the `approval` block. Its
+  `reply` is the whole reply as `POST /api/chat` gave it (sources with their passages,
+  actions and their results, agent steps), rebuilt from the saved graph state, so an old
+  conversation can be shown exactly like a new one. It is empty while the workflow is
+  still running, and when the saved state is gone (`CHECKPOINTER=memory` after a restart).
 - `GET /api/metrics`: workflows by status (and in the last 24 hours), each agent's runs,
   errors, average and 95th-percentile time and tokens, each tool's calls and error codes,
   approvals by status, and documents and chunks. `scope` says whether it covers one shop
   or all.
+
+**Lists for the website (Phase 7).** Each stays inside the caller's shop; an admin (or
+local development without a token) sees every shop, or one with `?shop_id=SHOP-002`. A
+shop user who asks for another shop gets 403.
+
+- `GET /api/sessions?limit=20`: your recent conversations, newest first, each with how
+  many requests it has and the status of the latest. A shop user sees the ones they
+  started; an admin sees everyone's.
+- `GET /api/workflows?status=awaiting_approval&limit=50`: recent requests, newest first.
+- `GET /api/approvals?status=pending&limit=50`: the approvals inbox. Each item has the
+  action (`tool`, `description`, `arguments`), why, who decides (`required_role`), the
+  estimate, the rules, the request that led to it (`user_query`), and, once decided,
+  `decided_by`, `decided_at` and `decision_note`. `counts` gives every status in the same
+  scope (the website's badge).
+- `GET /api/shops`: the shops you can ask about: yours, or all 50 for an admin.
+- `GET /api/evaluations?limit=5`: the latest runs of `python -m scripts.eval_agent`
+  (which saves each run in the `evaluations` table; `--no-save` skips that): per run the
+  models, how many cases passed every check, and each score's average; per case its
+  checks, time and details. Evaluation cases cover many shops, so only an admin sees them
+  (403 for shop users).
+- `GET /api/auth/dev-users`: the demo users with their shop names, for the login page.
+  Like the development login, it works only with `APP_ENV` local or test.
 
 ## 6. Documents: upload and ingest
 
@@ -279,8 +311,8 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 | Error handlers | `backend/app/core/exceptions.py` |
 | Routes | `backend/app/api/routes/` (one file per group) |
 | Uploads and ingestion jobs | `backend/app/services/documents_service.py` |
-| Sessions, workflows, metrics | `backend/app/services/records_service.py` |
-| Tests (every endpoint over HTTP) | `backend/tests/test_api_phase6.py` |
+| Sessions, workflows, metrics and the Phase 7 lists | `backend/app/services/records_service.py` |
+| Tests (every endpoint over HTTP) | `backend/tests/test_api_phase6.py`, `test_api_phase7.py` |
 
 Some choices, and why:
 

@@ -12,9 +12,11 @@ whole run costs a few cents on a small model and takes one to three minutes.
 
 Nothing is changed in the shop's records: when a case pauses for approval, the script
 checks what is waiting and for whom, then **rejects** it, so no action ever runs (the
-tests approve them on a copy of the database instead). Prints one line per case and
-writes a Markdown report to evaluation/reports/. Exits with 0 when the gate passes, 1
-when it does not, and 2 when something is not set up.
+tests approve them on a copy of the database instead). Prints one line per case,
+writes a Markdown report to evaluation/reports/ and saves the scores in the
+evaluations table, where the website's admin page shows them (``--no-save`` skips
+that). Exits with 0 when the gate passes, 1 when it does not, and 2 when something is
+not set up.
 """
 
 import argparse
@@ -26,7 +28,13 @@ import uuid
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from app.agents.evaluation import AgentCase, load_agent_cases, run_cases, to_markdown
+from app.agents.evaluation import (
+    AgentCase,
+    load_agent_cases,
+    run_cases,
+    save_report,
+    to_markdown,
+)
 from app.agents.human_review import reject_all
 from app.config.paths import BACKEND_DIR, backend_path
 from app.config.settings import get_settings
@@ -56,6 +64,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=0.0,
         help="seconds to wait between cases, to stay under a free tier's per-minute limit",
+    )
+    parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="do not store the scores in the database (the admin page shows stored runs)",
     )
     return parser.parse_args(argv)
 
@@ -119,11 +132,21 @@ async def run(args: argparse.Namespace) -> int:
 
     models = f"fast={llm.model_for('fast')}, smart={llm.model_for('smart')}"
     print(f"Running {len(cases)} case(s) with {models} at {llm.endpoint.where}\n")
+    saved = ""
     try:
         report = await run_cases(cases, run_one)
+        report.models = models
+        if not args.no_save:
+            try:
+                run_id = await save_report(get_session_factory(), report)
+                saved = f"Saved as evaluation run {run_id} (the admin page shows it)."
+            except Exception as exc:  # the report file still has everything
+                saved = (
+                    f"Could not save the scores in the database ({type(exc).__name__}); "
+                    "the report file has them."
+                )
     finally:
         await dispose_engine()
-    report.models = models
 
     print()
     for o in report.outcomes:
@@ -164,6 +187,8 @@ async def run(args: argparse.Namespace) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(to_markdown(report, minimum=args.min), encoding="utf-8", newline="\n")
     print(f"Report: {path.relative_to(BACKEND_DIR) if path.is_relative_to(BACKEND_DIR) else path}")
+    if saved:
+        print(saved)
     return 0 if report.passed(args.min) else 1
 
 
