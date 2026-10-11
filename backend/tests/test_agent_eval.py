@@ -25,6 +25,8 @@ from app.agents.evaluation import (
 )
 from app.config.paths import BACKEND_DIR
 from app.tools.api_tools import FaultInjector
+from tests.conftest import approval_request
+from tests.fake_llm import RuleBasedLLM
 
 DATASET = BACKEND_DIR / "evaluation" / "datasets" / "agent_cases.yaml"
 
@@ -77,6 +79,32 @@ async def test_approved_cases_end_with_the_tools_real_result(make_deps, run_agen
         statuses = {a["tool"]: a["status"] for a in state["proposed_actions"]}
         assert statuses[case.approval_tool] == case.approved_result, (case.id, statuses)
         assert state["validation_result"] == "PASS", (case.id, state["validation_feedback"])
+
+
+async def test_f01_a_follow_up_case_waits_for_staff_and_opens_once_approved(
+    make_deps, run_agent
+) -> None:
+    """F01, as Gemini answered it: the supplier's system is down and the margin is below
+    cost, so it proposes a follow-up case. The shopkeeper only asked a question, so the
+    case never opens by itself: staff approve it first. Either way F01 passes."""
+    [case] = [c for c in load_agent_cases(DATASET) if c.id == "F01"]
+    deps = make_deps(RuleBasedLLM(follow_up_case=True), faults=FaultInjector(case.fault))
+
+    paused = await run_agent(deps, case.message, shop_id=case.shop_id)
+    [waiting] = approval_request(paused)["actions"]
+    assert waiting["tool"] == "create_case" and waiting["required_role"] == "staff"
+
+    approved = await run_agent(
+        deps, case.message, shop_id=case.shop_id, decision="approve", user="USR-008", role="staff"
+    )
+    [opened] = [a for a in approved["proposed_actions"] if a["tool"] == "create_case"]
+    assert opened["status"] == "done" and opened["approved_by"] == "USR-008"
+
+    async def run_one(case):
+        return await run_agent(deps, case.message, shop_id=case.shop_id, decision="reject")
+
+    [outcome] = (await run_cases([case], run_one)).outcomes
+    assert outcome.route_taken == "approval" and outcome.passed, miss_reasons(outcome)
 
 
 # ------------------------------------------------------------------ scoring rules
@@ -167,6 +195,21 @@ def test_the_guardrail_check_works_both_ways() -> None:
     assert "guardrail" not in case_scores(_outcome(_case()))  # only scored when stated
 
 
+def test_an_allowed_action_put_to_a_person_is_also_right() -> None:
+    case = _case(route="answer", escalation="none", may_propose=("create_case",))
+    answered = _outcome(case)
+    followed_up = _outcome(case, asked=[("create_case", "staff")])
+    repriced = _outcome(case, asked=[("update_selling_price", "owner")])
+    both = _outcome(case, asked=[("create_case", "staff"), ("update_selling_price", "owner")])
+
+    assert answered.passed and followed_up.passed
+    assert not repriced.route_ok and not repriced.escalation_ok
+    assert not both.passed  # one allowed action does not excuse another
+    assert miss_reasons(repriced)[0] == (
+        "route approval, expected answer (or approval of create_case)"
+    )
+
+
 def test_the_report_breaks_results_down_by_category() -> None:
     clarify = AgentCase(
         id="Q01",
@@ -217,6 +260,7 @@ async def test_the_pause_between_cases_is_not_counted_as_case_time() -> None:
         ("escalation", "manager", "escalation must be one of"),
         ("fault", "explode", "fault must be one of"),
         ("category", "weird", "category must be one of"),
+        ("may_propose", "[delete_everything]", "may_propose lists unknown action tools"),
     ],
 )
 def test_a_typo_in_the_dataset_is_refused(tmp_path: Path, field, value, message) -> None:

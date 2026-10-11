@@ -536,6 +536,11 @@ a person. The four misses:
 - **F01** (the supplier's system times out): it said so, worked out the margin from
   the records (−3.4%, below the 8% minimum, so the owner decides) and proposed opening a
   case; the dataset expected an answer only. A sensible extra step, still a miss.
+  **Changed since**: F01 now also accepts a follow-up case, as long as a person approves
+  it (`may_propose: [create_case]`); any other action, such as a price change while the
+  supplier's price is unknown, still misses. A case the agent proposes on a question
+  never opens by itself (the policy gate, section 9): staff approve it first. With
+  Gemini, F01 now passes.
 - **M04** and **P02**: the right behaviour (asked which product; refused the extra
   credit because a household balance over Rs 3,000 needs the owner), with a neighbouring
   intent (`returns` for damaged stock, `policy_question` for a credit question).

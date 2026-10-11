@@ -9,9 +9,10 @@ Test sets and reports. Reports are generated and not committed.
   5 prompt injection and 5 policy conflict. Each states the expected intent, records,
   cited documents, and where it matters the route (answer, ask back, or wait for a
   person), the escalation (nobody, staff or owner), the tools that must run or fail, the
-  guardrail verdict and an injected API fault. The header of the file explains every
-  field. Run `python -m scripts.eval_agent --temperature 0 --pause 30` (needs a chat
-  model; see docs/agents.md, section 10).
+  guardrail verdict, an injected API fault, and actions that are also right if a person
+  approves them (`may_propose`). The header of the file explains every field. Run
+  `python -m scripts.eval_agent --temperature 0 --pause 30` (needs a chat model; see
+  docs/agents.md, section 10).
 - `reports/`: Markdown reports written by those scripts: every rate against the 0.8
   gate, results by category, time per case (median and 95th percentile), tokens, and
   why each missed case missed.

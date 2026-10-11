@@ -36,6 +36,10 @@ checks, each scored only on the cases that state it:
 A ``fault`` (``timeout``, ``server_error``, ``rate_limited``) makes the mock supplier
 and messaging APIs fail for that case, as ``FaultInjector`` does in the tool tests.
 
+``may_propose`` lists actions that are also right, as long as they wait for a person:
+F01 expects an answer, but a follow-up case put to staff passes route and escalation
+too. Any other action proposed still misses.
+
 The gate is that every rate reaches the minimum (0.8). ``scripts/eval_agent.py`` runs
 the cases with the real model; the tests run them with a scripted one. Each run can be
 saved to the ``evaluations`` table, one row per case (``save_report``), so the admin
@@ -55,6 +59,7 @@ import yaml
 
 from app.agents.common import compact
 from app.agents.validator import unsupported_claims
+from app.tools.registry import ACTION_TOOL_NAMES
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -92,6 +97,9 @@ class AgentCase:
     tool_errors: tuple[str, ...] = ()  # ... and these must fail
     flagged: bool | None = None  # the input guardrail must (not) flag the message
     fault: str | None = None  # the mock APIs fail this way for this case
+    # Actions that may also be proposed, for a person to approve, instead of the route
+    # and escalation above (F01: a follow-up case is as right as an answer).
+    may_propose: tuple[str, ...] = ()
 
     @property
     def is_approval_case(self) -> bool:
@@ -182,8 +190,15 @@ class CaseOutcome:
         return self.outcome or "none"  # failed or blocked: no expected route matches
 
     @property
+    def proposed_only_allowed(self) -> bool:
+        """A person was asked, and only about actions the case allows (``may_propose``)."""
+        return bool(self.asked) and all(tool in self.case.may_propose for tool, _ in self.asked)
+
+    @property
     def route_ok(self) -> bool:
-        return self.case.route is None or self.route_taken == self.case.route
+        if self.case.route is None or self.route_taken == self.case.route:
+            return True
+        return self.route_taken == "approval" and self.proposed_only_allowed
 
     @property
     def escalation_taken(self) -> str:
@@ -194,7 +209,7 @@ class CaseOutcome:
     @property
     def escalation_ok(self) -> bool:
         expected = self.case.escalation
-        if expected is None:
+        if expected is None or self.proposed_only_allowed:
             return True
         taken = self.escalation_taken
         if expected == "none":
@@ -340,6 +355,9 @@ def _check(item: dict[str, Any]) -> None:
     missing = set(item.get("tool_errors") or ()) - set(item.get("tools") or ())
     if missing:
         raise ValueError(f"{where}: tool_errors must also be listed in tools ({missing})")
+    unknown = set(item.get("may_propose") or ()) - set(ACTION_TOOL_NAMES)
+    if unknown:
+        raise ValueError(f"{where}: may_propose lists unknown action tools ({unknown})")
 
 
 def load_agent_cases(path: Path) -> list[AgentCase]:
@@ -366,6 +384,7 @@ def load_agent_cases(path: Path) -> list[AgentCase]:
                 tool_errors=_tuple(item.get("tool_errors")),
                 flagged=item.get("flagged"),
                 fault=item.get("fault"),
+                may_propose=_tuple(item.get("may_propose")),
             )
         )
     ids = [case.id for case in cases]
@@ -549,7 +568,8 @@ def miss_reasons(o: CaseOutcome) -> list[str]:
             f"asked: {asked}; outcome {o.outcome}"
         )
     if not o.route_ok:
-        reasons.append(f"route {o.route_taken}, expected {case.route}")
+        allowed = f" (or approval of {' or '.join(case.may_propose)})" if case.may_propose else ""
+        reasons.append(f"route {o.route_taken}, expected {case.route}{allowed}")
     if not o.escalation_ok:
         reasons.append(f"escalation {o.escalation_taken}, expected {case.escalation}")
     if not o.tools_ok:

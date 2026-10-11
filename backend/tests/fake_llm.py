@@ -259,6 +259,7 @@ class RuleBasedLLM:
         bad_arguments: int = 0,
         ignore_reminder_gap: bool = False,
         never_clarify: bool = False,
+        follow_up_case: bool = False,
     ) -> None:
         self.fail = set(fail)
         self.more_data = more_data
@@ -272,6 +273,8 @@ class RuleBasedLLM:
         self.ignore_reminder_gap = ignore_reminder_gap
         # Guesses instead of asking back, as Gemini did on Q05 ("Can they bring it back?").
         self.never_clarify = never_clarify
+        # Also proposes a follow-up case for the product, as Gemini did on F01.
+        self.follow_up_case = follow_up_case
         self.repair_requests: list[str] = []
         self.calls: list[str] = []
 
@@ -400,6 +403,22 @@ class RuleBasedLLM:
                 }
             )
         actions += _more_actions(request, intent)
+        products = ids_of_kind(request, "product_ids")
+        if self.follow_up_case and products:
+            actions.append(
+                {
+                    "tool": "create_case",
+                    "arguments_json": json.dumps(
+                        {
+                            "category": "pricing",
+                            "title": f"Check the margin of {products[0]}",
+                            "description": f"Follow up on the request: {request[:200]}",
+                            "product_id": products[0],
+                        }
+                    ),
+                    "reason": "The owner decides when the margin is too low.",
+                }
+            )
         evidence = [{"source": "record", "reference": s, "fact": "Checked."} for s in sources[:2]]
         evidence += [
             {"source": "policy", "reference": c, "fact": "Applies."} for c in citations[:1]

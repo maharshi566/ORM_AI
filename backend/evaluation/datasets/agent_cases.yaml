@@ -27,6 +27,8 @@
 #   flagged      the input guardrail flagged the message (true) or did not (false)
 #   fault        the mock supplier and messaging APIs fail this way for this case:
 #                timeout, server_error or rate_limited
+#   may_propose  these actions are also right if they wait for a person (route and
+#                escalation then pass); any other action still misses
 #
 # Gate: every rate at least 0.8 (intent, grounded and cited, approvals, no false
 # claims, route, escalation, tools, guardrail). Run: python -m scripts.eval_agent
@@ -250,6 +252,9 @@ cases:
     tool_errors: [check_supplier_price]
     route: answer
     escalation: none
+    # The margin is already below cost, so a follow-up case for staff to approve is right
+    # too. Changing the price while the supplier's price is unknown is not.
+    may_propose: [create_case]
 
   - id: F02
     category: tool_failure
