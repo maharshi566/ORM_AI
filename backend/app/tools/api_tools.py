@@ -20,6 +20,7 @@ from typing import Any, Protocol
 from pydantic import Field
 
 from app.config.settings import Settings
+from app.core.monitoring import MESSAGES
 from app.core.phones import is_dialable, normalize_phone
 from app.integrations.whatsapp import Template, WhatsAppClient, WhatsAppError
 from app.tools.base import ToolContext, ToolError, ToolErrorCode, ToolInput, ToolOutput, ToolSpec
@@ -206,11 +207,16 @@ class WhatsAppMessagingAPI:
             raise UpstreamError(
                 ToolErrorCode.INVALID_INPUT, f"No WhatsApp template is set for '{purpose}'."
             )
-        target = self.recipient_for(recipient)
+        try:
+            target = self.recipient_for(recipient)
+        except UpstreamError:
+            MESSAGES.labels(purpose, "refused").inc()
+            raise
         template = Template(template_name, self.settings.whatsapp_language, tuple(params))
         try:
             message_id = await self.client.send_template(target, template)
         except WhatsAppError as exc:
+            MESSAGES.labels(purpose, "failed").inc()
             code = (
                 ToolErrorCode.RATE_LIMITED
                 if exc.code in {4, 80007, 130429}
@@ -219,6 +225,7 @@ class WhatsAppMessagingAPI:
                 )
             )
             raise UpstreamError(code, str(exc)) from exc
+        MESSAGES.labels(purpose, "sent").inc()
         return {
             "message_id": message_id,
             "channel": channel,

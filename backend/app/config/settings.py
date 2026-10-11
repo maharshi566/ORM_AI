@@ -162,6 +162,14 @@ class Settings(BaseSettings):
     mock_api_latency_ms: int = 0
     tool_retry_backoff_seconds: float = 0.3
 
+    # --- Monitoring (docs/monitoring.md) -------------------------------------
+    # Unhandled errors are reported to Sentry when a DSN is set (nothing personal is sent).
+    sentry_dsn: SecretStr | None = None
+    sentry_traces_sample_rate: float = Field(default=0.0, ge=0, le=1)  # share of requests traced
+    # GET /metrics (Prometheus) needs "Authorization: Bearer <this>" when set; without it
+    # the endpoint is open locally and switched off in production.
+    metrics_token: SecretStr | None = None
+
     # --- Health checks ---------------------------------------------------
     health_check_timeout_seconds: float = 2.0
 

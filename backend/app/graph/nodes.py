@@ -41,6 +41,7 @@ from app.agents.common import AgentOutcome, citations_in
 from app.agents.language import SECTION_TITLES, Language, language_of
 from app.agents.response import describe_action, describe_result
 from app.core.logging import get_logger
+from app.core.monitoring import AGENT_STEPS, LLM_TOKENS, WORKFLOWS
 from app.graph.deps import AgentDeps
 from app.models.types import utcnow
 from app.services.chat_model import LLMError
@@ -131,6 +132,14 @@ def agent_node(name: str, run: AgentRun) -> Node:
             "error": error,
         }
         logger.info("agent_run", workflow_id=state.get("workflow_id"), **trace)
+        AGENT_STEPS.labels(name, trace["status"]).inc()
+        if usage.model:
+            LLM_TOKENS.labels(usage.model, "input").inc(usage.input_tokens or 0)
+            LLM_TOKENS.labels(usage.model, "output").inc(usage.output_tokens or 0)
+        if name == "finalize":
+            WORKFLOWS.labels(
+                outcome.update.get("outcome") or state.get("outcome") or "unknown"
+            ).inc()
         await deps.record_run(state.get("workflow_id"), trace, started_at)
         await deps.emit({"type": "agent_finished", **trace})
         return {**outcome.update, "agent_trace": [trace]}

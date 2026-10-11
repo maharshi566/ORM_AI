@@ -4,11 +4,13 @@ Run locally with:  uvicorn app.main:app --reload
 """
 
 import asyncio
+import hmac
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.api.router import api_router
 from app.config.settings import Settings, get_settings
@@ -19,6 +21,7 @@ from app.core.middleware import (
     BodySizeLimitMiddleware,
     RequestContextMiddleware,
 )
+from app.core.monitoring import REGISTRY, init_monitoring
 from app.core.tracing import configure_tracing
 from app.models.database import dispose_engine, init_engine
 from app.services.redis_client import close_redis, init_redis
@@ -74,6 +77,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level, settings.log_json)
+    init_monitoring(settings)  # Sentry, when SENTRY_DSN is set
 
     app = FastAPI(
         title=settings.app_name,
@@ -111,6 +115,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(app)
     app.include_router(api_router, prefix=settings.api_prefix)
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics(request: Request) -> Response:
+        """Prometheus metrics (app/core/monitoring.py). With METRICS_TOKEN set, only for
+        "Authorization: Bearer <token>"; in production without one, switched off."""
+        token = settings.metrics_token.get_secret_value().strip() if settings.metrics_token else ""
+        if token:
+            sent = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+            if not hmac.compare_digest(sent, token):
+                return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
+        elif settings.is_production:
+            return Response(status_code=404)
+        return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:

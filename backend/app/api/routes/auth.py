@@ -30,6 +30,7 @@ from app.api.identity import session_factory_for
 from app.config.settings import Settings, get_settings
 from app.core.auth import CurrentUser, Principal, UnauthorizedError, create_token
 from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.monitoring import LOGINS
 from app.core.rate_limit import login_rate_limit
 from app.models import Shop, User
 from app.models.schemas import (
@@ -143,8 +144,16 @@ async def login(
 ) -> TokenResponse:
     if not settings.auth_password_login:
         raise ForbiddenError("Password logins are switched off on this server.")
-    async with session_factory_for(request)() as db:
-        user = await auth_service.password_login(db, body.email, body.password, utcnow())
+    try:
+        async with session_factory_for(request)() as db:
+            user = await auth_service.password_login(db, body.email, body.password, utcnow())
+    except auth_service.LockedError:
+        LOGINS.labels("password", "locked").inc()
+        raise
+    except UnauthorizedError:
+        LOGINS.labels("password", "failed").inc()
+        raise
+    LOGINS.labels("password", "success").inc()
     return await _token_for(request, user, settings)
 
 
@@ -181,10 +190,15 @@ async def otp_verify(
 ) -> TokenResponse:
     if settings.otp_mode == "off":
         raise ForbiddenError("Login codes are switched off on this server (OTP_CHANNEL).")
-    async with session_factory_for(request)() as db:
-        user = await auth_service.verify_login_code(
-            db, body.phone, body.code.strip(), settings, utcnow()
-        )
+    try:
+        async with session_factory_for(request)() as db:
+            user = await auth_service.verify_login_code(
+                db, body.phone, body.code.strip(), settings, utcnow()
+            )
+    except UnauthorizedError:
+        LOGINS.labels("code", "failed").inc()
+        raise
+    LOGINS.labels("code", "success").inc()
     return await _token_for(request, user, settings)
 
 

@@ -11,6 +11,7 @@ from app.api.routes import (
     documents,
     health,
     knowledge,
+    monitoring,
     records,
     users,
     webhooks,
@@ -18,6 +19,7 @@ from app.api.routes import (
 
 api_router = APIRouter()
 api_router.include_router(health.router)
+api_router.include_router(monitoring.router)  # /health/live, /client-errors
 api_router.include_router(knowledge.router)  # Phase 3: GET /knowledge/search
 api_router.include_router(chat.router)  # Phase 4: POST /chat, GET /chat/graph
 api_router.include_router(approval.router)  # Phase 5: POST/GET /approval/{workflow_id}

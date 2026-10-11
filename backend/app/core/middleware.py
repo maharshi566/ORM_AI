@@ -13,6 +13,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.logging import get_logger
+from app.core.monitoring import HTTP_REQUESTS, HTTP_SECONDS
 
 REQUEST_ID_HEADER = "X-Request-ID"
 _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -56,13 +57,20 @@ class RequestContextMiddleware:
         try:
             await self.app(scope, receive, send_with_request_id)
         finally:
+            elapsed = time.perf_counter() - start
             logger.info(
                 "request_completed",
                 method=scope["method"],
                 path=scope["path"],
                 status=status_code,
-                latency_ms=round((time.perf_counter() - start) * 1000, 2),
+                latency_ms=round(elapsed * 1000, 2),
             )
+            # The route template (/workflows/{workflow_id}), never the raw path, so
+            # the number of metric series stays small.
+            route = getattr(scope.get("route"), "path", "unmatched")
+            if route != "/metrics":
+                HTTP_REQUESTS.labels(scope["method"], route, str(status_code)).inc()
+                HTTP_SECONDS.labels(scope["method"], route).observe(elapsed)
             structlog.contextvars.clear_contextvars()
 
 

@@ -93,6 +93,8 @@ All paths start with `/api`. "Login" says what a token is needed for when
 | Method | Path | What it does | Login | Rate limit |
 | --- | --- | --- | --- | --- |
 | GET | `/health` | 200 when PostgreSQL and Redis answer, 503 with details when one is down | no | – |
+| GET | `/health/live` | 200 while the process runs (no dependency checks; for a platform's health check) | no | – |
+| POST | `/client-errors` | The website reports an error a visitor hit ([monitoring.md](monitoring.md)) | no | login |
 | GET | `/auth/methods` | Which logins this server offers | no | – |
 | POST | `/auth/login` | Log in with email and password | no | login |
 | POST | `/auth/otp/request` | Send a one-time login code to a phone (always 202) | no | login |

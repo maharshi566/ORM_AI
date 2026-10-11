@@ -10,6 +10,7 @@ import "@fontsource/martel/800.css";
 
 import type { Metadata, Viewport } from "next";
 
+import { ErrorReporter } from "@/components/ErrorReporter";
 import { SiteHeader } from "@/components/SiteHeader";
 
 import "./globals.css";
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         >
           Skip to content
         </a>
+        <ErrorReporter />
         <SiteHeader />
         <main id="main" className="flex flex-1 flex-col">
           {children}

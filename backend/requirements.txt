@@ -37,3 +37,7 @@ python-multipart==0.0.32 # file uploads (multipart/form-data)
 # --- Real logins and WhatsApp (after Phase 9) ---
 argon2-cffi==25.1.0      # password hashes (Argon2id)
 httpx==0.28.1            # the WhatsApp Cloud API client (already installed with openai)
+
+# --- Monitoring ---
+sentry-sdk[fastapi]==2.70.0  # error alerts (only with SENTRY_DSN)
+prometheus-client==0.26.0    # GET /metrics

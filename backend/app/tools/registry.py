@@ -23,6 +23,7 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 
 from app.core.logging import get_logger
+from app.core.monitoring import TOOL_CALLS
 from app.models import ToolCall
 from app.tools.api_tools import API_TOOLS
 from app.tools.base import ToolContext, ToolError, ToolErrorCode, ToolResult, ToolSpec
@@ -118,6 +119,7 @@ class ToolRegistry:
             latency_ms=result.latency_ms,
             attempts=result.attempts,
         )
+        TOOL_CALLS.labels(name, result.status).inc()
         await self._record(ctx, agent, name, arguments, result)
         return result
 

@@ -40,6 +40,7 @@ from app.agents.human_review import changed_records
 from app.core.auth import Principal, check_shop
 from app.core.exceptions import ConflictError, ForbiddenError, InvalidRequestError, NotFoundError
 from app.core.logging import get_logger
+from app.core.monitoring import APPROVAL_DECISIONS
 from app.models import Approval, AuditLog, User, Workflow
 from app.models.schemas import (
     ApprovalDecisionRequest,
@@ -259,6 +260,7 @@ class ApprovalService:
                     "arguments": arguments if decision == "modify" else proposed.get("arguments"),
                 }
                 row.status = STATUS_FOR[decision]
+                APPROVAL_DECISIONS.labels(decision).inc()
                 row.decided_by = user.id
                 row.decision_note = note
                 row.decided_at = decided_at
