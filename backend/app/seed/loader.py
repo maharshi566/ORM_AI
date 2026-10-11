@@ -9,6 +9,7 @@ from sqlalchemy import func, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 import app.models  # noqa: F401  (registers every table)
+from app.core.phones import normalize_phone
 from app.models.database import Base
 from app.seed.generator import TABLES, Dataset
 
@@ -37,9 +38,18 @@ async def load_dataset(engine: AsyncEngine, dataset: Dataset, *, reset: bool) ->
             await reset_all_tables(conn)
         for name in TABLES:
             rows = dataset.rows(name)
+            if name == "users":
+                rows = [_with_login_phone(row) for row in rows]
             if rows:
                 await conn.execute(insert(Base.metadata.tables[name]), rows)
     return dataset.counts()
+
+
+def _with_login_phone(row: dict[str, Any]) -> dict[str, Any]:
+    """The phone in the form one-time code logins look up (+910000040001). The synthetic
+    numbers cannot receive messages (app/core/phones.py), so codes for them go only to
+    the development console."""
+    return {**row, "phone_e164": normalize_phone(row.get("phone"))}
 
 
 def _csv_value(value: Any) -> Any:

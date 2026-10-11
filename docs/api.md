@@ -28,12 +28,34 @@ There are two modes, set in `.env`:
 | `false` (local default) | Works. Say who you are in the body (`user_id`), as in Phases 4 and 5. Records of every shop can be read. | The token decides: its user and its shop. A different `user_id` or another shop is refused (403). |
 | `true` (production) | 401 on every chat, approval, record, search and document call. | As above. |
 
+**Real logins** work on every server and end in the same token:
+
+| How | Calls | Rules |
+| --- | --- | --- |
+| Email and password | `POST /api/auth/login` `{"email", "password"}` | Passwords are Argon2id hashes. Five wrong passwords in a row lock the account for 15 minutes (429). A wrong email and a wrong password get the same answer. |
+| A code on the phone | `POST /api/auth/otp/request` `{"phone"}`, then `POST /api/auth/otp/verify` `{"phone", "code"}` | Six digits over WhatsApp ([whatsapp.md](whatsapp.md)), valid 10 minutes, one login, five guesses. One code a minute, five an hour. Asking always gets the same answer, whether or not the number has an account. `OTP_CHANNEL`: `whatsapp`, `console` (the code is written to the backend log; local and test only) or `off`; empty means console locally and off elsewhere. |
+
+`GET /api/auth/methods` says which of these the server offers (the login page asks it).
+`POST /api/auth/password` changes your own password and returns a new token: every older
+token stops working, so a password change also logs out a stolen session. Each token
+carries the user's `token_version`, which a password change or switching the user off
+raises.
+
+**The first user on a new server** comes from the command line; after that, owners add
+their staff on the Account page (`/api/users`):
+
+```powershell
+python -m scripts.create_user --name "Ramesh Naidu" --role owner --shop SHOP-001 `
+  --email ramesh@example.com --phone "+91 98765 43210"
+```
+
 **Getting a token on your own computer.** `POST /api/auth/dev-token` gives a token for any
 demo user. It works only when `APP_ENV` is `local` or `test` and `AUTH_DEV_LOGIN=true`.
-On any shared server it is refused, because it would let anyone log in as anyone. A real
-deployment issues tokens from its own login system, signed with `AUTH_SECRET`. A public demo
-may open it for a few demo accounts with `AUTH_DEMO_USERS=USR-001,USR-003` (never an admin;
-`GET /api/auth/dev-users` then lists only those); see [deploy.md](deploy.md#a-public-demo).
+On any shared server it is refused, because it would let anyone log in as anyone. A public
+demo may open it for a few demo accounts with `AUTH_DEMO_USERS=USR-001,USR-003` (never an
+admin; `GET /api/auth/dev-users` then lists only those); see
+[deploy.md](deploy.md#a-public-demo). The demo users' phone numbers are made up
+(`+91-00000-…`): a code for them goes only to the development console.
 
 Demo users (from the synthetic data):
 
@@ -71,6 +93,11 @@ All paths start with `/api`. "Login" says what a token is needed for when
 | Method | Path | What it does | Login | Rate limit |
 | --- | --- | --- | --- | --- |
 | GET | `/health` | 200 when PostgreSQL and Redis answer, 503 with details when one is down | no | – |
+| GET | `/auth/methods` | Which logins this server offers | no | – |
+| POST | `/auth/login` | Log in with email and password | no | login |
+| POST | `/auth/otp/request` | Send a one-time login code to a phone (always 202) | no | login |
+| POST | `/auth/otp/verify` | Log in with that code | no | login |
+| POST | `/auth/password` | Change your password (other sessions end) | yes | login |
 | POST | `/auth/dev-token` | A token for a demo user (local and test only) | no | login |
 | GET | `/auth/me` | Who the token says you are (with your name and shop's name) | no | – |
 | GET | `/auth/dev-users` | The demo users the development login accepts (local and test only) | no | login |
@@ -92,6 +119,10 @@ All paths start with `/api`. "Login" says what a token is needed for when
 | POST | `/documents/upload` | Add a .md, .txt or .pdf document | yes | upload |
 | POST | `/documents/ingest` | Re-ingest the knowledge base and the uploads, in the background | yes (owner) | upload |
 | GET | `/documents/ingest/{job_id}` | How an ingestion went | yes | – |
+| GET | `/users` | The team: your shop's users (owner), or everyone (admin) | yes (owner) | – |
+| POST | `/users` | Add a user (owners add staff to their own shop) | yes (owner) | – |
+| PATCH | `/users/{user_id}` | Switch a user off or on, or set a new password | yes (owner) | – |
+| GET, POST | `/webhooks/whatsapp` | WhatsApp delivery receipts, signed by Meta ([whatsapp.md](whatsapp.md)) | signature | – |
 
 **Which shop can I see?** A logged-in owner or staff member sees only their own shop:
 another shop's conversation, workflow or approval gives 403, and search and metrics are

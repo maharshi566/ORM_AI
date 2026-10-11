@@ -51,6 +51,32 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(20))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = _now_column()
+    # --- Logins (app/services/auth_service.py) ---
+    # Lower-cased; logs in with a password.
+    email: Mapped[str | None] = mapped_column(String(254), unique=True)
+    # The phone in E.164 (+919876543210); logs in with a one-time code.
+    phone_e164: Mapped[str | None] = mapped_column(String(16), unique=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255))  # Argon2id; None: no password
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Raised on a password change or "log out everywhere": older tokens stop working.
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class LoginCode(Base):
+    """A one-time login code sent to a user's phone. Only a keyed hash is stored."""
+
+    __tablename__ = "login_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(20))  # whatsapp, console
+    code_hash: Mapped[str] = mapped_column(String(64))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _now_column()
 
 
 class ChatSession(Base):

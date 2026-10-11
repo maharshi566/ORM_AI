@@ -109,6 +109,8 @@ class NotificationChannel(StrEnum):
 class NotificationStatus(StrEnum):
     QUEUED = "queued"
     SENT = "sent"
+    DELIVERED = "delivered"  # WhatsApp delivery receipts (app/api/routes/webhooks.py)
+    READ = "read"
     FAILED = "failed"
 
 

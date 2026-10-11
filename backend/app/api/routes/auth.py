@@ -1,21 +1,24 @@
-"""Login tokens (Phase 6).
+"""Logins and tokens (Phase 6; real logins after Phase 9).
 
-``POST /api/auth/dev-token`` gives a token for one of the demo users, so the API and
-the frontend can be tried with real logins. It works only when ``APP_ENV`` is
-``local`` or ``test`` and ``AUTH_DEV_LOGIN=true``. A real deployment issues tokens
-from its own login system (signed with ``AUTH_SECRET``, see app/core/auth.py).
+Real logins (app/services/auth_service.py), on every server:
 
-Send the token as ``Authorization: Bearer <token>``. In http://localhost:8000/docs,
-click **Authorize** (top right) and paste it.
+* ``POST /api/auth/login``: email and password.
+* ``POST /api/auth/otp/request``, then ``POST /api/auth/otp/verify``: a six-digit code
+  sent to the user's phone over WhatsApp (``OTP_CHANNEL``).
+* ``POST /api/auth/password``: change your own password (other sessions end).
+* ``GET /api/auth/methods``: which of these this server offers, for the login page.
 
-``GET /api/auth/dev-users`` lists the demo users the development login accepts (the
-frontend's login page shows them). It follows the same rule as the development login:
-local and test only.
+Each answers with the same token. Send it as ``Authorization: Bearer <token>``. In
+http://localhost:8000/docs, click **Authorize** (top right) and paste it.
 
-A **public demo** (Phase 9) may open the same login on any server for a short list of
-demo accounts: ``AUTH_DEMO_USERS=USR-001,USR-003``. Only those users can log in that
-way, and never an admin (an admin token reads and decides for every shop). Everyone
-else needs a token from the deployment's own login system.
+The development login, ``POST /api/auth/dev-token``, gives a token for any user, so the
+API and the frontend can be tried without passwords. It works only when ``APP_ENV`` is
+``local`` or ``test`` and ``AUTH_DEV_LOGIN=true``. ``GET /api/auth/dev-users`` lists
+the users it accepts (the login page shows them).
+
+A **public demo** (Phase 9) may open the development login on any server for a short
+list of demo accounts: ``AUTH_DEMO_USERS=USR-001,USR-003``. Only those users can log in
+that way, and never an admin (an admin token reads and decides for every shop).
 """
 
 from typing import Annotated
@@ -25,11 +28,24 @@ from sqlalchemy import select
 
 from app.api.identity import session_factory_for
 from app.config.settings import Settings, get_settings
-from app.core.auth import CurrentUser, Principal, create_token
+from app.core.auth import CurrentUser, Principal, UnauthorizedError, create_token
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.rate_limit import login_rate_limit
 from app.models import Shop, User
-from app.models.schemas import DevTokenRequest, DevUserView, MeResponse, TokenResponse
+from app.models.schemas import (
+    CodeRequestBody,
+    CodeRequestResponse,
+    CodeVerifyBody,
+    DevTokenRequest,
+    DevUserView,
+    LoginMethodsResponse,
+    MeResponse,
+    PasswordChangeRequest,
+    PasswordLoginRequest,
+    TokenResponse,
+)
+from app.models.types import utcnow
+from app.services import auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -39,12 +55,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 DEV_LOGIN_ENVIRONMENTS = {"local", "test"}
 
 
+def _dev_login_open(settings: Settings) -> bool:
+    return settings.app_env in DEV_LOGIN_ENVIRONMENTS and settings.auth_dev_login
+
+
 def _demo_only(settings: Settings) -> bool:
     """False: any user may log in (development). True: only the demo accounts may.
 
     Refuses when neither applies, the normal state of a shared server.
     """
-    if settings.app_env in DEV_LOGIN_ENVIRONMENTS and settings.auth_dev_login:
+    if _dev_login_open(settings):
         return False
     if settings.demo_user_list:
         return True
@@ -70,20 +90,14 @@ async def _names(request: Request, user_id: str) -> tuple[User | None, str | Non
     return user, shop.name if shop else None
 
 
-@router.post("/dev-token", response_model=TokenResponse, summary="A login token for a demo user")
-async def dev_token(
-    request: Request,
-    body: DevTokenRequest,
-    settings: Annotated[Settings, Depends(get_settings)],
-    _: Annotated[None, Depends(login_rate_limit)],
-) -> TokenResponse:
-    demo_only = _demo_only(settings)
-    user, shop_name = await _names(request, body.user_id)
-    if user is None or not user.is_active:
-        raise NotFoundError(f"No active user {body.user_id}.")
-    if demo_only:
-        _check_demo_user(user, settings)
-    principal = Principal(user_id=user.id, shop_id=user.shop_id, role=str(user.role))  # type: ignore[arg-type]
+async def _token_for(request: Request, user: User, settings: Settings) -> TokenResponse:
+    _, shop_name = await _names(request, user.id)
+    principal = Principal(
+        user_id=user.id,
+        shop_id=user.shop_id,
+        role=str(user.role),  # type: ignore[arg-type]
+        token_version=user.token_version or 0,
+    )
     return TokenResponse(
         access_token=create_token(principal, settings),
         expires_in=settings.auth_token_hours * 3600,
@@ -93,6 +107,125 @@ async def dev_token(
         name=user.name,
         shop_name=shop_name,
     )
+
+
+def _code_sender(request: Request, settings: Settings) -> auth_service.CodeSender:
+    """The app's code sender, made on first use (tests put their own on app.state)."""
+    sender = getattr(request.app.state, "code_sender", None)
+    if sender is None:
+        sender = auth_service.code_sender_for(settings)
+        if sender is None:
+            raise ForbiddenError("Login codes are switched off on this server (OTP_CHANNEL).")
+        request.app.state.code_sender = sender
+    return sender
+
+
+# ------------------------------------------------------------------ real logins
+
+
+@router.get("/methods", response_model=LoginMethodsResponse, summary="Login methods offered")
+async def methods(settings: Annotated[Settings, Depends(get_settings)]) -> LoginMethodsResponse:
+    mode = settings.otp_mode
+    return LoginMethodsResponse(
+        password=settings.auth_password_login,
+        otp=mode != "off",
+        otp_channel=None if mode == "off" else mode,
+        demo=_dev_login_open(settings) or bool(settings.demo_user_list),
+    )
+
+
+@router.post("/login", response_model=TokenResponse, summary="Log in with email and password")
+async def login(
+    request: Request,
+    body: PasswordLoginRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    _: Annotated[None, Depends(login_rate_limit)],
+) -> TokenResponse:
+    if not settings.auth_password_login:
+        raise ForbiddenError("Password logins are switched off on this server.")
+    async with session_factory_for(request)() as db:
+        user = await auth_service.password_login(db, body.email, body.password, utcnow())
+    return await _token_for(request, user, settings)
+
+
+@router.post(
+    "/otp/request",
+    response_model=CodeRequestResponse,
+    status_code=202,
+    summary="Send a one-time login code to a phone",
+)
+async def otp_request(
+    request: Request,
+    body: CodeRequestBody,
+    settings: Annotated[Settings, Depends(get_settings)],
+    _: Annotated[None, Depends(login_rate_limit)],
+) -> CodeRequestResponse:
+    sender = _code_sender(request, settings)
+    async with session_factory_for(request)() as db:
+        answer = await auth_service.request_login_code(db, body.phone, sender, settings, utcnow())
+    where = "on WhatsApp" if answer.channel == "whatsapp" else "in the backend log"
+    return CodeRequestResponse(
+        message=f"If this number has an account, a code is on its way {where}.",
+        channel=answer.channel,
+        expires_in=answer.expires_in,
+        resend_after=answer.resend_after,
+    )
+
+
+@router.post("/otp/verify", response_model=TokenResponse, summary="Log in with the code")
+async def otp_verify(
+    request: Request,
+    body: CodeVerifyBody,
+    settings: Annotated[Settings, Depends(get_settings)],
+    _: Annotated[None, Depends(login_rate_limit)],
+) -> TokenResponse:
+    if settings.otp_mode == "off":
+        raise ForbiddenError("Login codes are switched off on this server (OTP_CHANNEL).")
+    async with session_factory_for(request)() as db:
+        user = await auth_service.verify_login_code(
+            db, body.phone, body.code.strip(), settings, utcnow()
+        )
+    return await _token_for(request, user, settings)
+
+
+@router.post(
+    "/password",
+    response_model=TokenResponse,
+    summary="Change your password (your other sessions end)",
+)
+async def change_password(
+    request: Request,
+    body: PasswordChangeRequest,
+    principal: CurrentUser,
+    settings: Annotated[Settings, Depends(get_settings)],
+    _: Annotated[None, Depends(login_rate_limit)],
+) -> TokenResponse:
+    if principal is None:
+        raise UnauthorizedError("Log in first.")
+    async with session_factory_for(request)() as db:
+        user = await auth_service.change_password(
+            db, principal.user_id, body.current_password, body.new_password, utcnow()
+        )
+    return await _token_for(request, user, settings)  # a fresh token for this session
+
+
+# ------------------------------------------------------------------ development login
+
+
+@router.post("/dev-token", response_model=TokenResponse, summary="A login token for a demo user")
+async def dev_token(
+    request: Request,
+    body: DevTokenRequest,
+    settings: Annotated[Settings, Depends(get_settings)],
+    _: Annotated[None, Depends(login_rate_limit)],
+) -> TokenResponse:
+    demo_only = _demo_only(settings)
+    user, _shop_name = await _names(request, body.user_id)
+    if user is None or not user.is_active:
+        raise NotFoundError(f"No active user {body.user_id}.")
+    if demo_only:
+        _check_demo_user(user, settings)
+    return await _token_for(request, user, settings)
 
 
 @router.get(

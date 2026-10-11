@@ -56,6 +56,43 @@ export type DevUser = {
   shop_name: string | null;
 };
 
+/** What the login page offers on this server (GET /api/auth/methods). */
+export type LoginMethods = {
+  password: boolean;
+  otp: boolean;
+  otp_channel: "whatsapp" | "console" | null;
+  demo: boolean;
+};
+
+export type CodeRequestResponse = {
+  message: string;
+  channel: string;
+  expires_in: number;
+  resend_after: number;
+};
+
+/** A member of the shop's team (GET /api/users). */
+export type TeamUser = {
+  user_id: string;
+  name: string;
+  role: Role;
+  shop_id: string | null;
+  email: string | null;
+  phone: string | null; // masked except the last three digits
+  is_active: boolean;
+  has_password: boolean;
+  last_login_at: string | null;
+};
+
+export type NewUser = {
+  name: string;
+  role?: Role;
+  shop_id?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  password?: string | null;
+};
+
 // ------------------------------------------------------------------ chat
 
 export type ChatStatus = "completed" | "needs_clarification" | "awaiting_approval" | "blocked" | "failed";

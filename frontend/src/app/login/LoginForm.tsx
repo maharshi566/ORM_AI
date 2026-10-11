@@ -4,10 +4,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { Notice, PageTitle, Spinner } from "@/components/ui";
-import { ApiError, devLogin, errorMessage, getDevUsers, tokenLogin } from "@/lib/api";
+import { ApiError, devLogin, errorMessage, getDevUsers, getLoginMethods, tokenLogin } from "@/lib/api";
 import { ROLE_LABEL } from "@/lib/login";
 import { safeNext } from "@/lib/paths";
-import type { DevUser } from "@/types/api";
+import type { DevUser, LoginMethods } from "@/types/api";
+
+import { RealLogin } from "./RealLogin";
 
 // The people the guides use in their examples come first.
 const SUGGESTED = ["USR-001", "USR-002", "USR-003", "USR-101"];
@@ -29,6 +31,13 @@ export function LoginForm() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState("");
+  const [methods, setMethods] = useState<LoginMethods | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getLoginMethods(controller.signal).then(setMethods, () => undefined);
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -38,7 +47,7 @@ export function LoginForm() {
         if (controller.signal.aborted) return;
         const message =
           err instanceof ApiError && err.status === 403
-            ? "This server does not offer demo logins. Use a token from your login system below."
+            ? "This server does not offer demo logins. Log in with your email or phone above."
             : errorMessage(err);
         setUsers({ kind: "unavailable", message });
       },
@@ -91,9 +100,10 @@ export function LoginForm() {
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
       <PageTitle title="Log in">
-        Pick who you are. Each shopkeeper sees only their own shop&apos;s records; staff can approve small things, the
-        owner everything.
+        Each shopkeeper sees only their own shop&apos;s records; staff can approve small things, the owner everything.
       </PageTitle>
+
+      {methods ? <RealLogin methods={methods} onDone={() => router.push(next)} /> : null}
 
       {error ? (
         <div className="mt-6">
@@ -101,23 +111,23 @@ export function LoginForm() {
         </div>
       ) : null}
 
-      {users.kind === "loading" ? (
+      {methods?.demo === false ? null : users.kind === "loading" ? (
         <div className="mt-8">
           <Spinner label="Asking the server for its demo users" />
         </div>
       ) : null}
 
-      {users.kind === "unavailable" ? (
+      {methods?.demo === false ? null : users.kind === "unavailable" ? (
         <div className="mt-8">
           <Notice tone="info">{users.message}</Notice>
         </div>
       ) : null}
 
-      {users.kind === "ready" ? (
+      {methods?.demo !== false && users.kind === "ready" ? (
         <>
-          <section className="mt-8" aria-labelledby="suggested">
+          <section className="mt-10" aria-labelledby="suggested">
             <h2 id="suggested" className="font-serif text-lg font-bold">
-              For the demo
+              Or pick a demo user
             </h2>
             <ul className="mt-3 divide-y divide-rule overflow-hidden rounded-lg border border-rule bg-sheet">
               {suggested.map((user) =>
@@ -191,12 +201,11 @@ export function LoginForm() {
         </>
       ) : null}
 
-      <details className="mt-10 rounded-lg border border-rule bg-sheet px-4 py-3" open={users.kind === "unavailable"}>
+      <details className="mt-10 rounded-lg border border-rule bg-sheet px-4 py-3">
         <summary className="cursor-pointer font-medium">Log in with a token instead</summary>
         <form onSubmit={submitToken} className="mt-3 space-y-3">
           <p className="text-sm text-ink-2">
-            On a shared server, demo logins are switched off. Paste the token your login system issued (signed with the
-            server&apos;s AUTH_SECRET).
+            For developers: paste a token another system issued (signed with the server&apos;s AUTH_SECRET).
           </p>
           <label className="block text-sm font-medium">
             Token

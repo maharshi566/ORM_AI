@@ -11,17 +11,21 @@ import type {
   ApprovalListResponse,
   ApprovalStatusResponse,
   ChatResponse,
+  CodeRequestResponse,
   DevUser,
   EvaluationsResponse,
   HealthResponse,
   IngestJobResponse,
+  LoginMethods,
   MeResponse,
   MetricsResponse,
+  NewUser,
   SessionListItem,
   SessionResponse,
   ShopView,
   StageEvent,
   StreamErrorEvent,
+  TeamUser,
   TokenResponse,
   UploadResponse,
   WorkflowListItem,
@@ -138,8 +142,7 @@ export const getDevUsers = (signal?: AbortSignal) => getJson<DevUser[]>("/api/au
 export const getMe = (signal?: AbortSignal) => getJson<MeResponse>("/api/auth/me", signal);
 
 /** POST /api/auth/dev-token, then remember the login in this browser. */
-export async function devLogin(userId: string): Promise<Login> {
-  const token = await postJson<TokenResponse>("/api/auth/dev-token", { user_id: userId });
+function saveToken(token: TokenResponse): Login {
   const login: Login = {
     token: token.access_token,
     userId: token.user_id,
@@ -151,6 +154,51 @@ export async function devLogin(userId: string): Promise<Login> {
   };
   setLogin(login);
   return login;
+}
+
+export async function devLogin(userId: string): Promise<Login> {
+  return saveToken(await postJson<TokenResponse>("/api/auth/dev-token", { user_id: userId }));
+}
+
+export function getLoginMethods(signal?: AbortSignal): Promise<LoginMethods> {
+  return getJson<LoginMethods>("/api/auth/methods", signal);
+}
+
+export async function passwordLogin(email: string, password: string): Promise<Login> {
+  return saveToken(await postJson<TokenResponse>("/api/auth/login", { email, password }));
+}
+
+export function requestLoginCode(phone: string): Promise<CodeRequestResponse> {
+  return postJson<CodeRequestResponse>("/api/auth/otp/request", { phone });
+}
+
+export async function verifyLoginCode(phone: string, code: string): Promise<Login> {
+  return saveToken(await postJson<TokenResponse>("/api/auth/otp/verify", { phone, code }));
+}
+
+/** Change your password; the server ends your other sessions and returns a new token. */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<Login> {
+  return saveToken(
+    await postJson<TokenResponse>("/api/auth/password", {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  );
+}
+
+// ------------------------------------------------------------------ the team
+
+export function listUsers(signal?: AbortSignal): Promise<TeamUser[]> {
+  return getJson<TeamUser[]>("/api/users", signal);
+}
+
+export function createUser(user: NewUser): Promise<TeamUser> {
+  return postJson<TeamUser>("/api/users", user);
+}
+
+export async function updateUser(userId: string, change: { is_active?: boolean; password?: string }): Promise<TeamUser> {
+  const response = await send(`/api/users/${encodeURIComponent(userId)}`, { method: "PATCH", json: change });
+  return (await response.json()) as TeamUser;
 }
 
 /** Log in with a token from another login system: ask the server who it belongs to. */

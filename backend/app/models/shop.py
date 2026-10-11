@@ -265,7 +265,8 @@ class Notification(Base):
     status: Mapped[NotificationStatus] = mapped_column(
         enum_type(NotificationStatus, "notification_status")
     )
-    external_id: Mapped[str | None] = mapped_column(String(60))
+    # A WhatsApp message ID (wamid.…) runs to about 60 characters, sometimes more.
+    external_id: Mapped[str | None] = mapped_column(String(128), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[str] = mapped_column(String(40))

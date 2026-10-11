@@ -79,13 +79,13 @@ export function SiteHeader() {
         <div className="ml-auto flex items-center gap-3 text-sm">
           {login ? (
             <>
-              <div className="text-right leading-tight">
+              <Link href="/account" className="rounded-md px-2 py-1 text-right leading-tight hover:bg-paper" title="Your account">
                 <div className="font-semibold">
                   {login.name ?? login.userId}
                   <span className="font-normal text-ink-3"> ({ROLE_LABEL[login.role].toLowerCase()})</span>
                 </div>
                 <div className="text-ink-2">{login.shopName ?? "Every shop"}</div>
-              </div>
+              </Link>
               <button
                 type="button"
                 onClick={() => {

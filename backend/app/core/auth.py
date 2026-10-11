@@ -11,8 +11,11 @@ after ``AUTH_TOKEN_HOURS``. Send it as ``Authorization: Bearer <token>``.
   valid token, and a user can only reach their own shop.
 
 ``POST /api/auth/dev-token`` hands out a token for any user ID, for development and the
-demo. It is refused in production; a real deployment issues tokens from its login
-system (any that can sign HS256 JWTs with ``AUTH_SECRET``).
+demo. It is refused in production, where people log in with a password or a one-time
+code (app/services/auth_service.py, ``POST /api/auth/login`` and ``/auth/otp/...``).
+
+A token also carries the user's ``token_version``. Changing the password or switching
+the user off raises it in the database, so every older token stops working at once.
 """
 
 import base64
@@ -44,6 +47,7 @@ class Principal:
     user_id: str
     shop_id: str | None
     role: Role
+    token_version: int = 0
 
 
 def _b64(data: bytes) -> str:
@@ -54,7 +58,8 @@ def _unb64(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
-def _secret(settings: Settings) -> bytes:
+def signing_key(settings: Settings) -> bytes:
+    """The key that signs tokens (and hashes one-time login codes)."""
     if settings.auth_secret and settings.auth_secret.get_secret_value().strip():
         return settings.auth_secret.get_secret_value().strip().encode()
     return _PROCESS_SECRET
@@ -67,13 +72,14 @@ def create_token(principal: Principal, settings: Settings, *, now: float | None 
         "sub": principal.user_id,
         "shop": principal.shop_id,
         "role": principal.role,
+        "ver": principal.token_version,
         "iat": issued,
         "exp": issued + settings.auth_token_hours * 3600,
     }
     signing_input = ".".join(
         _b64(json.dumps(part, separators=(",", ":")).encode()) for part in (header, payload)
     )
-    signature = hmac.new(_secret(settings), signing_input.encode(), hashlib.sha256).digest()
+    signature = hmac.new(signing_key(settings), signing_input.encode(), hashlib.sha256).digest()
     return f"{signing_input}.{_b64(signature)}"
 
 
@@ -91,7 +97,7 @@ def decode_token(token: str, settings: Settings, *, now: float | None = None) ->
     if not isinstance(header, dict) or header.get("alg") != "HS256":
         raise invalid
     expected = hmac.new(
-        _secret(settings), f"{header_b64}.{payload_b64}".encode(), hashlib.sha256
+        signing_key(settings), f"{header_b64}.{payload_b64}".encode(), hashlib.sha256
     ).digest()
     if not hmac.compare_digest(signature, expected):
         raise invalid
@@ -100,6 +106,7 @@ def decode_token(token: str, settings: Settings, *, now: float | None = None) ->
         payload: Any = json.loads(_unb64(payload_b64))
         expires = int(payload["exp"])
         user_id, role, shop_id = payload["sub"], payload["role"], payload.get("shop")
+        version = int(payload.get("ver", 0))  # tokens from before token versions: 0
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         raise invalid from exc
     if expires < int(now if now is not None else time.time()):
@@ -108,7 +115,7 @@ def decode_token(token: str, settings: Settings, *, now: float | None = None) ->
         raise invalid
     if shop_id is not None and not isinstance(shop_id, str):
         raise invalid
-    return Principal(user_id=user_id, shop_id=shop_id, role=role)
+    return Principal(user_id=user_id, shop_id=shop_id, role=role, token_version=version)
 
 
 async def _still_valid(request: Request, principal: Principal) -> Principal:
@@ -132,10 +139,17 @@ async def _still_valid(request: Request, principal: Principal) -> Principal:
         raise DependencyUnavailableError(DATABASE_MESSAGE) from exc
     if user is None or not user.is_active:
         raise UnauthorizedError("This login is no longer valid. Log in again.")
+    if (user.token_version or 0) != principal.token_version:
+        raise UnauthorizedError("You were logged out (the password changed). Log in again.")
     role = str(user.role)
     if role not in {"owner", "staff", "admin"}:
         raise UnauthorizedError("This login is no longer valid. Log in again.")
-    return Principal(user_id=user.id, shop_id=user.shop_id, role=role)  # type: ignore[arg-type]
+    return Principal(
+        user_id=user.id,
+        shop_id=user.shop_id,
+        role=role,  # type: ignore[arg-type]
+        token_version=user.token_version or 0,
+    )
 
 
 # Declares "Authorization: Bearer <token>" in the API description, which gives the

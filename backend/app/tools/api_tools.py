@@ -1,21 +1,27 @@
-"""Mock external APIs, with failure injection, and the tool that calls them.
+"""External APIs: the mocks (with failure injection), real WhatsApp, and the tool
+that calls the supplier API.
 
-Real shops would connect to a supplier's ordering system and a WhatsApp/SMS
-gateway. For development these are simulated here, and every call can be made to
-fail on purpose (``MOCK_API_FAILURE_MODE``), so the agents' error handling and
-the tool-failure evaluation cases can be tested without real services.
+A real shop connects to a supplier's ordering system and to WhatsApp. The supplier
+API is simulated here; messaging is simulated too (``MESSAGING_PROVIDER=mock``), or
+goes out through the WhatsApp Cloud API (``MESSAGING_PROVIDER=whatsapp``,
+``WhatsAppMessagingAPI``). Every mock call can be made to fail on purpose
+(``MOCK_API_FAILURE_MODE``), so the agents' error handling and the tool-failure
+evaluation cases can be tested without real services.
 """
 
 import asyncio
 import hashlib
 import random
+from collections.abc import Sequence
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import Field
 
 from app.config.settings import Settings
+from app.core.phones import is_dialable, normalize_phone
+from app.integrations.whatsapp import Template, WhatsAppClient, WhatsAppError
 from app.tools.base import ToolContext, ToolError, ToolErrorCode, ToolInput, ToolOutput, ToolSpec
 from app.tools.helpers import get_product, get_supplier_row, margin_percent, money
 
@@ -105,16 +111,41 @@ class MockSupplierAPI:
         return {"supplier_ref": f"{supplier_id}-{_short_hash(purchase_order_id)}", "accepted": True}
 
 
+class MessagingAPI(Protocol):
+    """Sends one message. ``text`` is the full message (kept in ``notifications``);
+    ``purpose`` and ``params`` pick and fill the approved WhatsApp template."""
+
+    name: str
+
+    async def send(
+        self,
+        channel: str,
+        recipient: str,
+        text: str,
+        *,
+        purpose: str = "",
+        params: Sequence[str] = (),
+    ) -> dict[str, str]: ...
+
+
 class MockMessagingAPI:
-    """Stands in for a WhatsApp/SMS gateway."""
+    """Stands in for WhatsApp: nothing leaves the backend."""
 
     name = "messaging_api"
 
     def __init__(self, faults: FaultInjector | None = None) -> None:
         self.faults = faults or FaultInjector()
-        self.sent: list[dict[str, str]] = []  # handy for tests
+        self.sent: list[dict[str, Any]] = []  # handy for tests
 
-    async def send(self, channel: str, recipient: str, text: str) -> dict[str, str]:
+    async def send(
+        self,
+        channel: str,
+        recipient: str,
+        text: str,
+        *,
+        purpose: str = "",
+        params: Sequence[str] = (),
+    ) -> dict[str, str]:
         await self.faults.before_call(self.name)
         message = {
             "message_id": f"{channel[:2].upper()}-{_short_hash(recipient, text)}",
@@ -122,13 +153,89 @@ class MockMessagingAPI:
             "recipient": recipient,
             "text": text,
         }
-        self.sent.append(message)
+        self.sent.append({**message, "purpose": purpose, "params": list(params)})
         return message
+
+
+class WhatsAppMessagingAPI:
+    """Sends through the WhatsApp Cloud API, as the template for each purpose.
+
+    Safety first: a number that cannot be a real one (the synthetic data's) is refused,
+    and ``WHATSAPP_TEST_RECIPIENT`` sends every message to one test phone instead.
+    """
+
+    name = "messaging_api"
+
+    def __init__(self, settings: Settings, client: WhatsAppClient | None = None) -> None:
+        self.settings = settings
+        self.client = client or WhatsAppClient(settings)
+        self.templates = {
+            "payment_reminder": settings.whatsapp_template_payment_reminder,
+            "supplier_follow_up": settings.whatsapp_template_supplier_follow_up,
+            "daily_briefing": settings.whatsapp_template_daily_briefing,
+        }
+
+    def recipient_for(self, recipient: str) -> str:
+        """The E.164 number the message really goes to."""
+        test = self.settings.whatsapp_test_recipient.strip()
+        target = normalize_phone(test) if test else normalize_phone(recipient)
+        if not is_dialable(target):
+            where = "WHATSAPP_TEST_RECIPIENT" if test else "The number on record"
+            raise UpstreamError(
+                ToolErrorCode.INVALID_INPUT,
+                f"{where} ({test or recipient}) cannot receive WhatsApp messages; "
+                "nothing was sent.",
+            )
+        return target  # type: ignore[return-value]
+
+    async def send(
+        self,
+        channel: str,
+        recipient: str,
+        text: str,
+        *,
+        purpose: str = "",
+        params: Sequence[str] = (),
+    ) -> dict[str, str]:
+        if channel != "whatsapp":
+            raise UpstreamError(
+                ToolErrorCode.INVALID_INPUT, "Only WhatsApp is connected; SMS is not set up."
+            )
+        template_name = self.templates.get(purpose)
+        if not template_name:
+            raise UpstreamError(
+                ToolErrorCode.INVALID_INPUT, f"No WhatsApp template is set for '{purpose}'."
+            )
+        target = self.recipient_for(recipient)
+        template = Template(template_name, self.settings.whatsapp_language, tuple(params))
+        try:
+            message_id = await self.client.send_template(target, template)
+        except WhatsAppError as exc:
+            code = (
+                ToolErrorCode.RATE_LIMITED
+                if exc.code in {4, 80007, 130429}
+                else (
+                    ToolErrorCode.UPSTREAM_ERROR if exc.retryable else ToolErrorCode.INVALID_INPUT
+                )
+            )
+            raise UpstreamError(code, str(exc)) from exc
+        return {
+            "message_id": message_id,
+            "channel": channel,
+            "recipient": recipient,
+            "text": text,
+            "delivered_to": target,
+        }
 
 
 def default_clients(settings: Settings) -> dict[str, Any]:
     faults = FaultInjector.from_settings(settings)
-    return {"supplier_api": MockSupplierAPI(faults), "messaging_api": MockMessagingAPI(faults)}
+    messaging: MessagingAPI = (
+        WhatsAppMessagingAPI(settings)
+        if settings.messaging_provider == "whatsapp"
+        else MockMessagingAPI(faults)
+    )
+    return {"supplier_api": MockSupplierAPI(faults), "messaging_api": messaging}
 
 
 # --------------------------------------------------------------------- tool

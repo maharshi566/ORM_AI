@@ -35,7 +35,7 @@ from app.models import (
     Shop,
     StockMovement,
 )
-from app.tools.api_tools import MockMessagingAPI, MockSupplierAPI
+from app.tools.api_tools import MessagingAPI, MockSupplierAPI
 from app.tools.base import ToolContext, ToolError, ToolErrorCode, ToolInput, ToolOutput, ToolSpec
 from app.tools.helpers import (
     audit,
@@ -470,13 +470,17 @@ async def send_payment_reminder(
         )
 
     shop = await ctx.session.get(Shop, ctx.shop_id)
+    shop_name = shop.name if shop else ctx.shop_id
+    # The approved WhatsApp template has the same words, with these four values.
+    params = (customer.name, shop_name, f"{facts.balance:,.2f}", f"{since:%d %b %Y}")
     message = (
-        f"Namaste {customer.name}, a gentle reminder from {shop.name if shop else ctx.shop_id}: "
-        f"Rs {facts.balance:,.2f} is pending on your account since {since:%d %b %Y}. "
-        "Please pay when convenient. Thank you."
+        f"Namaste {params[0]}, a gentle reminder from {params[1]}: Rs {params[2]} is pending "
+        f"on your account since {params[3]}. Please pay when convenient. Thank you."
     )
-    api: MockMessagingAPI = ctx.clients["messaging_api"]
-    sent = await api.send(args.channel, customer.phone, message)
+    api: MessagingAPI = ctx.clients["messaging_api"]
+    sent = await api.send(
+        args.channel, customer.phone, message, purpose="payment_reminder", params=params
+    )
     notification = Notification(
         shop_id=ctx.shop_id,
         customer_id=customer.id,
@@ -729,21 +733,28 @@ class FollowUpSupplierOutput(ToolOutput):
 
 def _follow_up_message(
     shop_name: str, contact: str, po: PurchaseOrder, late_by: int, missing: list[MissingItem]
-) -> str:
+) -> tuple[str, tuple[str, str, str, str]]:
+    """The message, and the four values of the WhatsApp template
+    "Namaste {{1}}, this is {{2}}. About our order {{3}}: {{4}} Thank you." """
     if not missing:
         expected = f"{po.expected_on:%d %b %Y}" if po.expected_on else "the agreed date"
-        return (
-            f"Namaste {contact}, this is {shop_name}. Our order {po.id} was due on {expected} "
-            f"and has not arrived yet ({late_by} days late). Please share the delivery date. "
-            "Thank you."
+        detail = (
+            f"it was due on {expected} and has not arrived yet ({late_by} days late). "
+            "Please share the delivery date."
         )
-    lines = "; ".join(
-        f"{item.product_name}: ordered {item.ordered}, received {item.received}" for item in missing
-    )
+    else:
+        lines = "; ".join(
+            f"{item.product_name}: ordered {item.ordered}, received {item.received}"
+            for item in missing
+        )
+        detail = (
+            f"it arrived short ({lines}). Please send the missing items with the next "
+            "delivery, or a credit note against the next invoice."
+        )
+    params = (contact, shop_name, po.id, detail)
     return (
-        f"Namaste {contact}, this is {shop_name}. Order {po.id} arrived short ({lines}). "
-        "Please send the missing items with the next delivery, or a credit note against the "
-        "next invoice. Thank you."
+        f"Namaste {contact}, this is {shop_name}. About our order {po.id}: {detail} Thank you.",
+        params,
     )
 
 
@@ -856,11 +867,13 @@ async def follow_up_supplier(
     ctx.require_approval("staff", f"messaging {supplier.name} about {po.id}")
 
     shop = await ctx.session.get(Shop, ctx.shop_id)
-    message = _follow_up_message(
+    message, params = _follow_up_message(
         shop.name if shop else ctx.shop_id, supplier.contact_person, po, late_by, missing
     )
-    api: MockMessagingAPI = ctx.clients["messaging_api"]
-    sent = await api.send(args.channel, supplier.phone, message)
+    api: MessagingAPI = ctx.clients["messaging_api"]
+    sent = await api.send(
+        args.channel, supplier.phone, message, purpose="supplier_follow_up", params=params
+    )
     notification = Notification(
         shop_id=ctx.shop_id,
         customer_id=None,

@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     # A public demo: these user IDs (comma-separated, never an admin) may log in with
     # the demo login on any server, production included. Empty = no demo logins there.
     auth_demo_users: str = ""
+    # Real logins (app/services/auth_service.py): email + password, and a one-time code
+    # sent to the user's phone. otp_channel: whatsapp (the WhatsApp settings below),
+    # console (the code is written to the backend log: local and test only), or off.
+    # Empty: console on a developer's machine, off anywhere else (see otp_mode).
+    auth_password_login: bool = True
+    otp_channel: Literal["whatsapp", "console", "off"] | None = None
     rate_limit_enabled: bool = True
     rate_limit_agent: str = "20/minute"  # chat, agent run, approvals (per user or IP)
     rate_limit_upload: str = "10/hour"
@@ -123,6 +129,23 @@ class Settings(BaseSettings):
     # Freezes "today" for the synthetic data (generated up to 2026-09-30), so that
     # "days overdue" and "late by" match the planted edge cases. Leave empty in production.
     business_date: date | None = None
+
+    # --- Messaging: WhatsApp Cloud API (docs/whatsapp.md) --------------------
+    # mock: nothing leaves the backend (development, tests). whatsapp: payment reminders,
+    # supplier follow-ups, login codes and the morning briefing go out through Meta's API.
+    messaging_provider: Literal["mock", "whatsapp"] = "mock"
+    whatsapp_access_token: SecretStr | None = None  # a System User token from Meta
+    whatsapp_phone_number_id: str = ""  # the sending number's ID (not the number itself)
+    whatsapp_api_version: str = "v23.0"
+    whatsapp_app_secret: SecretStr | None = None  # checks that webhook calls come from Meta
+    whatsapp_verify_token: SecretStr | None = None  # your own string, for the webhook setup
+    # When set, every message goes to this number instead of the real recipient (testing).
+    whatsapp_test_recipient: str = ""
+    whatsapp_language: str = "en"  # the templates' language code in WhatsApp Manager
+    whatsapp_template_payment_reminder: str = "payment_reminder"
+    whatsapp_template_supplier_follow_up: str = "supplier_follow_up"
+    whatsapp_template_login_code: str = "login_code"
+    whatsapp_template_daily_briefing: str = "daily_briefing"
 
     # --- Mock external APIs (Phase 2) -------------------------------------
     # none, timeout, server_error, not_found, rate_limited, or random (fails 20% of calls)
@@ -160,6 +183,13 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.app_env == "production"
 
+    @property
+    def otp_mode(self) -> Literal["whatsapp", "console", "off"]:
+        """How one-time login codes are delivered (OTP_CHANNEL, or the default)."""
+        if self.otp_channel is not None:
+            return self.otp_channel
+        return "console" if self.app_env in {"local", "test"} else "off"
+
     def production_problems(self) -> list[str]:
         """What must change before the app may start with APP_ENV=production."""
         problems = []
@@ -173,6 +203,26 @@ class Settings(BaseSettings):
             problems.append("AUTH_REQUIRED must be true.")
         if "*" in self.cors_origin_list:
             problems.append("CORS_ORIGINS must list the frontend's address, not *.")
+        if self.otp_mode == "console":
+            problems.append(
+                "OTP_CHANNEL=console writes login codes to the log; use whatsapp or off."
+            )
+        if self.otp_mode == "whatsapp" or self.messaging_provider == "whatsapp":
+            problems.extend(self.whatsapp_problems())
+        return problems
+
+    def whatsapp_problems(self) -> list[str]:
+        """What is missing before messages can go out through WhatsApp."""
+        problems = []
+        token = (
+            self.whatsapp_access_token.get_secret_value().strip()
+            if self.whatsapp_access_token
+            else ""
+        )
+        if not token:
+            problems.append("WHATSAPP_ACCESS_TOKEN is empty (a System User token from Meta).")
+        if not self.whatsapp_phone_number_id.strip():
+            problems.append("WHATSAPP_PHONE_NUMBER_ID is empty (WhatsApp Manager > API Setup).")
         return problems
 
 

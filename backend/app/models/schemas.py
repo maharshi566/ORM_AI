@@ -4,6 +4,7 @@ What the agents themselves return (TriageResult, InvestigationResult, FinalRespo
 is in app/agents/schemas.py; these are the shapes the API sends and receives.
 """
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -269,6 +270,67 @@ class DevUserView(BaseModel):
     role: str
     shop_id: str | None
     shop_name: str | None
+
+
+class LoginMethodsResponse(BaseModel):
+    """What the login page should offer on this server."""
+
+    password: bool
+    otp: bool
+    otp_channel: str | None = Field(description="whatsapp or console (development)")
+    demo: bool = Field(description="The demo login (development, or a public demo)")
+
+
+class PasswordLoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254, examples=["owner@example.com"])
+    password: str = Field(min_length=1, max_length=256)
+
+
+class CodeRequestBody(BaseModel):
+    phone: str = Field(min_length=6, max_length=24, examples=["+91 98765 43210"])
+
+
+class CodeRequestResponse(BaseModel):
+    message: str
+    channel: str
+    expires_in: int = Field(description="Seconds the code stays valid")
+    resend_after: int = Field(description="Seconds before another code can be asked for")
+
+
+class CodeVerifyBody(BaseModel):
+    phone: str = Field(min_length=6, max_length=24)
+    code: str = Field(min_length=4, max_length=10, pattern=r"^\s*\d+\s*$")
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(default="", max_length=256)
+    new_password: str = Field(min_length=1, max_length=256)
+
+
+class UserCreateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    role: Literal["owner", "staff", "admin"] = "staff"
+    shop_id: str | None = Field(default=None, description="Owners: leave empty for your shop")
+    email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=24)
+    password: str | None = Field(default=None, max_length=256)
+
+
+class UserUpdateRequest(BaseModel):
+    is_active: bool | None = None
+    password: str | None = Field(default=None, max_length=256)
+
+
+class UserView(BaseModel):
+    user_id: str
+    name: str
+    role: str
+    shop_id: str | None
+    email: str | None
+    phone: str | None = Field(description="Masked except the last three digits")
+    is_active: bool
+    has_password: bool
+    last_login_at: datetime | None
 
 
 class MessageView(BaseModel):
