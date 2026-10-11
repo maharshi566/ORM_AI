@@ -33,6 +33,13 @@ from app.services.llm_service import (
 )
 
 DEFAULT_HASH_DIMENSIONS = 512
+# Relevance cut-offs measured with scripts.eval_retrieval, between the highest score of
+# an off-topic question and the lowest score of a right answer, so that off-topic
+# questions find nothing. A model's scores have their own scale: Gemini's are higher.
+MEASURED_MIN_SIMILARITY = {
+    # Right answers 0.63 and up, off-topic questions 0.50 at most (October 2026).
+    "gemini-embedding-001": 0.57,
+}
 
 
 class EmbeddingError(RuntimeError):
@@ -106,7 +113,8 @@ class OpenAIEmbedder:
 
     # text-embedding-3 models score unrelated text around 0.0-0.2 and related
     # text around 0.3-0.7 (cosine similarity). Other models behave differently:
-    # set RETRIEVAL_MIN_SIMILARITY after running scripts.eval_retrieval.
+    # MEASURED_MIN_SIMILARITY has the ones measured; for the rest, set
+    # RETRIEVAL_MIN_SIMILARITY after running scripts.eval_retrieval.
     min_similarity = 0.25
 
     def __init__(
@@ -122,6 +130,10 @@ class OpenAIEmbedder:
         self.model = model
         self.endpoint = endpoint
         self.batch_size = batch_size
+        # A gateway may prefix the provider ("gemini/gemini-embedding-001").
+        self.min_similarity = MEASURED_MIN_SIMILARITY.get(
+            model.rsplit("/", 1)[-1], type(self).min_similarity
+        )
         self._client = client or make_client(endpoint, timeout=timeout, max_retries=max_retries)
 
     async def _embed(self, texts: list[str]) -> list[list[float]]:
@@ -140,7 +152,15 @@ class OpenAIEmbedder:
             except openai.OpenAIError as exc:
                 failure = explain_error(exc, self.endpoint, doing="embeddings", model=self.model)
                 raise EmbeddingError(failure.message, retryable=failure.retryable) from exc
-            vectors.extend(item.embedding for item in sorted(response.data, key=lambda d: d.index))
+            if len(response.data) != len(batch):
+                raise EmbeddingError(
+                    f"{self.endpoint.where}: {len(response.data)} embeddings came back for "
+                    f"{len(batch)} texts.",
+                    retryable=True,
+                )
+            # Google Gemini leaves the index out when it is 0 (it arrives as None).
+            ordered = sorted(response.data, key=lambda item: item.index or 0)
+            vectors.extend(item.embedding for item in ordered)
         return vectors
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:

@@ -243,6 +243,27 @@ async def test_embeddings_reach_the_gateway_with_its_key_and_float_format() -> N
 
 
 @pytest.mark.parametrize(
+    ("model", "cutoff"),
+    [
+        ("text-embedding-3-small", 0.25),
+        ("gemini-embedding-001", 0.57),  # Gemini's scores run higher: measured
+        ("gemini/gemini-embedding-001", 0.57),  # as a gateway names it
+    ],
+)
+def test_each_embedding_model_gets_its_own_relevance_cutoff(model, cutoff) -> None:
+    endpoint = LLMEndpoint("embeddings", BASE_URL, KEY, "LLM_API_KEY")
+
+    assert OpenAIEmbedder(model, endpoint).min_similarity == cutoff
+
+
+async def test_gemini_embeddings_come_back_in_input_order() -> None:
+    """Gemini leaves out an index of 0; sorting on it used to crash (int < None)."""
+    vectors = await embedder_for(FakeGateway(gemini=True)).embed_documents(["a", "bb", "ccc"])
+
+    assert [vector[0] for vector in vectors] == [1.0, 2.0, 3.0]
+
+
+@pytest.mark.parametrize(
     ("gateway_options", "expected", "retryable"),
     [
         ({"api_key": "another-key"}, ["rejected the API key", "LLM_API_KEY", "dashboard"], False),

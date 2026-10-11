@@ -112,7 +112,7 @@ Retrieved text is data, never instructions:
 | `CHROMA_PERSIST_DIR` | `./data/chroma` | Where vectors are stored (git-ignored). |
 | `KNOWLEDGE_BASE_DIR` | `./knowledge_base` | Where the documents are. |
 | `RERANKER` | `heuristic` | `llm` re-scores results with `LLM_MODEL_FAST` (small cost per search), `none` keeps the search order. |
-| `RETRIEVAL_MIN_SIMILARITY` | model default (OpenAI 0.25, hash 0.2) | The relevance gate. `scripts.eval_retrieval` prints the range to choose from. |
+| `RETRIEVAL_MIN_SIMILARITY` | model default (OpenAI 0.25, Gemini `gemini-embedding-001` 0.57, hash 0.2) | The relevance gate. `scripts.eval_retrieval` prints the range to choose from. |
 
 **Cost.** Embedding the whole knowledge base (78 documents, 223 chunks) is about 11,000
 tokens with `text-embedding-3-small`, a small fraction of one US cent. Each search embeds one
@@ -130,18 +130,23 @@ model, run `python -m scripts.ingest` and `python -m scripts.eval_retrieval`, an
 the way a shopkeeper would ask them, each with the document(s) that answer it, and
 two off-topic questions that should return nothing.
 
-| Metric | Meaning | Offline (hash) baseline |
-| --- | --- | --- |
-| hit@5 | the right document is in the top 5 (gate: 0.8) | 0.95 |
-| hit@1 | the right document comes first | 0.75 |
-| MRR | 1 for first place, 1/2 for second, …, averaged | 0.83 |
-| section hit | the best section is in the top 5 | 0.90 |
-| no-answer pass rate | off-topic questions return nothing | 1.00 |
+| Metric | Meaning | Offline (hash) | Gemini `gemini-embedding-001` |
+| --- | --- | --- | --- |
+| hit@5 | the right document is in the top 5 (gate: 0.8) | 0.95 | 1.00 |
+| hit@1 | the right document comes first | 0.75 | 0.90 |
+| MRR | 1 for first place, 1/2 for second, …, averaged | 0.83 | 0.94 |
+| section hit | the best section is in the top 5 | 0.90 | 0.90 |
+| no-answer pass rate | off-topic questions return nothing | 1.00 | 1.00 |
 
-The offline numbers are a floor: OpenAI embeddings understand meaning (for example
-"What time does the shop open?" matches "Hours: 6:00 am to 10:00 pm"). The test
-suite runs the offline evaluation on every push, so a change that hurts retrieval
-fails CI.
+The offline numbers are a floor: `hash` matches shared words, so "What time does the
+shop open?" scores 0.00 against "Hours: 6:00 am to 10:00 pm", and "The rice on the
+shelf is less than what the system shows" misses the stock-count procedure. A real
+embedding model matches meanings and finds both. Gemini's model costs nothing extra
+when Gemini is already the chat model (`EMBEDDING_MODEL=gemini-embedding-001`, then
+`python -m scripts.ingest`); its scores run higher than OpenAI's, so its relevance
+gate is 0.57, measured on this set (right answers 0.63 and up, off-topic questions
+0.50 at most). The test suite runs the offline evaluation on every push, so a change
+that hurts retrieval fails CI.
 
 ## Adding or changing a document
 

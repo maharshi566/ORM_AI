@@ -217,6 +217,9 @@ class FakeGateway:
             }
             for index, text in enumerate(texts)
         ]
+        if self.gemini:
+            del data[0]["index"]  # Gemini leaves out an index of 0
+            data.reverse()  # and nothing promises the input order, so test the sort too
         return JSONResponse(
             {
                 "object": "list",
