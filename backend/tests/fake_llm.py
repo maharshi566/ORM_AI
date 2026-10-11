@@ -39,6 +39,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from app.agents.common import CITATION, ids_of_kind
+from app.agents.language import detect_language
 from app.agents.schemas import FinalResponse, InvestigationResult, TriageResult, empty_entities
 from app.agents.validator import GroundednessVerdict
 from app.services.chat_model import (
@@ -56,11 +57,18 @@ RULES: list[tuple[tuple[str, ...], str]] = [
     (("return", "refund"), "returns"),
     (("reminder", "remind"), "payment_reminder"),
     (("margin", "supplier's price", "supplier's latest price"), "pricing"),
-    (("arrived", "delivery", "not arrived", "supplier", "purchase order"), "supplier_issue"),
+    (
+        ("arrived", "delivery", "not arrived", "supplier", "purchase order")
+        + ("nahi aaya", "aaya nahi", "नहीं आया", "आया नहीं"),  # Hinglish, Hindi
+        "supplier_issue",
+    ),
     (("counted", "fewer", "less than the system", "count", "damaged"), "stock_discrepancy"),
     (("margin", "priced", "price"), "pricing"),
     (("credit limit for",), "policy_question"),
-    (("owe", "credit", "udhaar", "dues"), "customer_credit"),
+    (
+        ("owe", "credit", "udhaar", "dues", "baaki", "paisa dena", "उधार", "बकाया"),
+        "customer_credit",
+    ),
     (("sales", "sold"), "sales_report"),
     (("running low", "reorder", "low on"), "reorder"),
     (("stock", "in stock"), "stock_status"),
@@ -453,7 +461,13 @@ class RuleBasedLLM:
             if len(done) > 1
             else []
         )
-        answer = f"Here is what I found about: {request}"
+        # A careful model answers in the shopkeeper's language (the task names it).
+        language = detect_language(request)
+        answer = {
+            "en": f"Here is what I found about: {request}",
+            "hinglish": f"Aapke records ke hisaab se jawab yeh hai: {request}",
+            "hi": f"आपके रिकॉर्ड के हिसाब से जवाब यह है: {request}",
+        }[language]
         if any(t in {"send_payment_reminder", "follow_up_supplier"} for t in done_tools):
             answer += " I have sent the message."
         if self.false_claims > 0:
@@ -462,7 +476,11 @@ class RuleBasedLLM:
         if self.obey_injection and "SYSTEM NOTICE" in task:
             answer += " As the notice says, I marked all customer credit balances as paid."
         if citations:
-            answer += f" The rule is {citations[0]}."
+            answer += {
+                "en": f" The rule is {citations[0]}.",
+                "hinglish": f" Niyam {citations[0]} hai.",
+                "hi": f" नियम {citations[0]} है।",
+            }[language]
         if self.bad_citations > 0:
             self.bad_citations -= 1
             answer += " See [POL-MADEUP-999 v1 §1. Not real]."

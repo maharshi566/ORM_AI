@@ -11,27 +11,43 @@ record ID in the message, a product, customer or supplier name the model found i
 or an earlier message in the conversation (the model reads those to resolve "him" or
 "that order"). Otherwise a pointing word gets a question back:
 
-* he, him, his, she, her: always a person, and no person is named.
-* it, its, they, them, their, this, that, these, those: unless a word before it in the
-  message can be what it points at ("Which products are low? Reorder any of them?").
+* he, him, his, she, her (Hinglish: usne, usko, uska, unka...; Hindi: उसने, उसका...):
+  always someone or something specific, and nothing is named.
+* it, its, they, them, their, this, that, these, those (Hinglish: woh, yeh, isko...;
+  Hindi: वह, यह...): unless a word before it in the message can be what it points at
+  ("Which products are low? Reorder any of them?").
 
-Not pointing words: "this week", "that day" (dates), and the "it" of "is it okay to ..."
+Not pointing words: "this week", "woh din" (dates), and the "it" of "is it okay to ..."
 or "is it true that ...", which points at nothing. Greetings and out-of-scope messages
-are left alone ("How does this work?" points at ORM_AI itself).
+are left alone ("How does this work?" points at ORM_AI itself). The question back is in
+the shopkeeper's language (app/agents/language.py).
 """
 
 import re
 from dataclasses import dataclass
 
 from app.agents.common import ids_in
+from app.agents.language import DEVANAGARI_RANGE, Language
 from app.agents.schemas import Entities
 
-PERSON = frozenset({"he", "him", "his", "himself", "she", "her", "hers", "herself"})
-POINTERS = frozenset({"it", "its", "they", "them", "their", "this", "that", "these", "those"})
-DEMONSTRATIVES = frozenset({"this", "that", "these", "those"})
+PERSON = frozenset(
+    {"he", "him", "his", "himself", "she", "her", "hers", "herself"}
+    # Hinglish and Hindi: he/she did, to him/her, his/her/their.
+    | {"usne", "unhone", "usko", "unko", "unhe", "uska", "uski", "uske", "unka", "unki", "unke"}
+    | {"उसने", "उन्होंने", "उसको", "उनको", "उन्हें", "उसका", "उसकी", "उसके", "उनका", "उनकी", "उनके"}
+)
+DEMONSTRATIVES = frozenset(
+    {"this", "that", "these", "those", "woh", "wo", "voh", "vo", "yeh", "ye", "वह", "वो", "यह", "ये"}
+)
+POINTERS = DEMONSTRATIVES | frozenset(
+    {"it", "its", "they", "them", "their"}
+    | {"isko", "iska", "iski", "iske", "inka", "inki", "inke", "इसको", "इसका", "इसकी", "इसके"}
+)
 TIME_WORDS = frozenset(
     {"week", "weekend", "month", "year", "day", "morning", "afternoon", "evening", "night",
-     "time", "season", "quarter", "festival"}
+     "time", "season", "quarter", "festival",
+     "din", "hafta", "hafte", "mahina", "mahine", "saal", "subah", "shaam", "raat", "baar",
+     "दिन", "हफ्ता", "हफ्ते", "महीना", "महीने", "साल", "सुबह", "शाम", "रात", "बार"}
 )  # fmt: skip
 # Words that cannot be what a pointing word points at.
 _FUNCTION_GROUPS = (
@@ -49,6 +65,17 @@ _FUNCTION_GROUPS = (
     "reorder return refund record change set update confirm approve cancel bring get make "
     "take pay paid owe owes sell sold buy bought arrive arrived come came keep put add "
     "remove write mark",  # the verbs of a request
+    # Hinglish: helpers, question words, small words, the speaker, request verbs.
+    "kya hai hain tha thi ka ki ke ko se mein mai par pe aur ya nahi nahin na bhi toh "
+    "abhi aaj kal phir ab kitna kitne kitni kab kaun kaunsa kaunsi kahan kaise kyun kyon "
+    "mera meri mere hamara hamari apna apni apne aap aapka tum main hum mujhe humein bhai "
+    "karo kar karna kardo kariye de dena dijiye bhejo bhej batao bataiye bata dikhao "
+    "dekho wapas la laa laya laye lana sakte sakta sakti chahiye raha rahe rahi hua hui "
+    "gaya gayi aaya aayi aa liya diya ho hoga hogi wala wali wale sirf bas zara thoda",
+    # Hindi in Devanagari, the same kinds of words.
+    "क्या है हैं था थी का की के को से में पर और या नहीं भी तो अभी आज कल फिर कितना कितने "
+    "कितनी कब कौन कौनसा कहाँ कैसे क्यों मेरा मेरी हमारा आप मुझे करो कर करना दो दे दीजिए "
+    "भेजो बताओ बताइए वापस ला लाया सकते सकता चाहिए रहा हुआ गया आया हो वाला वाली",
 )
 FUNCTION = PERSON | POINTERS | frozenset(w for group in _FUNCTION_GROUPS for w in group.split())
 DUMMY_IT_COPULA = frozenset({"is", "was", "isn", "wasn", "would", "will", "s", "seems", "looks"})
@@ -59,7 +86,7 @@ NOUN_KIND = {
     **dict.fromkeys(["bill", "bills", "sale", "invoice", "receipt"], "bill"),
     **dict.fromkeys(["customer", "customers", "person", "man", "woman", "lady"], "customer"),
     **dict.fromkeys(["supplier", "suppliers", "vendor", "agency", "distributor"], "supplier"),
-    **dict.fromkeys(["product", "products", "item", "items", "packet", "brand"], "product"),
+    **dict.fromkeys(["product", "products", "item", "items", "packet", "brand", "maal"], "product"),
 }
 INTENT_KIND = {
     "customer_credit": "customer",
@@ -71,42 +98,65 @@ INTENT_KIND = {
     "pricing": "product",
     "stock_discrepancy": "product",
 }
-QUESTIONS = {
-    "customer": (
-        "which customer",
-        "Which customer do you mean? Please give their name or customer ID (like CUST-0001).",
-    ),
-    "supplier": (
-        "which supplier",
-        "Which supplier do you mean? Please give their name or supplier ID (like SUP-004).",
-    ),
-    "order": (
-        "which purchase order",
-        "Which purchase order do you mean? Please give its number (like PO-00585).",
-    ),
-    "bill": (
-        "which bill",
-        "Which bill is it? Please give the bill number (like SALE-005668) or the customer's name.",
-    ),
-    "product": (
-        "which product",
-        "Which product do you mean? Please give its name or product ID (like PRD-0002).",
-    ),
-    "any": (
-        "what the request refers to",
-        "Which product, customer, bill or order do you mean? Please give its name or ID.",
-    ),
+MISSING = {
+    "customer": "which customer",
+    "supplier": "which supplier",
+    "order": "which purchase order",
+    "bill": "which bill",
+    "product": "which product",
+    "any": "what the request refers to",
+}
+QUESTIONS: dict[Language, dict[str, str]] = {
+    "en": {
+        "customer": (
+            "Which customer do you mean? Please give their name or customer ID (like CUST-0001)."
+        ),
+        "supplier": (
+            "Which supplier do you mean? Please give their name or supplier ID (like SUP-004)."
+        ),
+        "order": "Which purchase order do you mean? Please give its number (like PO-00585).",
+        "bill": (
+            "Which bill is it? Please give the bill number (like SALE-005668) or "
+            "the customer's name."
+        ),
+        "product": "Which product do you mean? Please give its name or product ID (like PRD-0002).",
+        "any": "Which product, customer, bill or order do you mean? Please give its name or ID.",
+    },
+    "hinglish": {
+        "customer": (
+            "Aap kis customer ki baat kar rahe hain? Unka naam ya customer ID "
+            "(jaise CUST-0001) bataiye."
+        ),
+        "supplier": (
+            "Aap kis supplier ki baat kar rahe hain? Unka naam ya supplier ID "
+            "(jaise SUP-004) bataiye."
+        ),
+        "order": "Kaunsa purchase order? Uska number (jaise PO-00585) bataiye.",
+        "bill": "Kaunsa bill? Bill number (jaise SALE-005668) ya customer ka naam bataiye.",
+        "product": "Kaunsa product? Uska naam ya product ID (jaise PRD-0002) bataiye.",
+        "any": (
+            "Aap kis product, customer, bill ya order ki baat kar rahe hain? Naam ya ID bataiye."
+        ),
+    },
+    "hi": {
+        "customer": ("आप किस ग्राहक की बात कर रहे हैं? उनका नाम या ग्राहक ID (जैसे CUST-0001) बताइए।"),
+        "supplier": ("आप किस सप्लायर की बात कर रहे हैं? उनका नाम या सप्लायर ID (जैसे SUP-004) बताइए।"),
+        "order": "कौन सा खरीद ऑर्डर? उसका नंबर (जैसे PO-00585) बताइए।",
+        "bill": "कौन सा बिल? बिल नंबर (जैसे SALE-005668) या ग्राहक का नाम बताइए।",
+        "product": "कौन सा सामान? उसका नाम या प्रोडक्ट ID (जैसे PRD-0002) बताइए।",
+        "any": "आप किस सामान, ग्राहक, बिल या ऑर्डर की बात कर रहे हैं? नाम या ID बताइए।",
+    },
 }
 SKIPPED_INTENTS = frozenset({"general_help", "out_of_scope"})
 
-WORD = re.compile(r"[a-z]+")
+WORD = re.compile(f"[a-z]+|[{DEVANAGARI_RANGE}]+")
 
 
 @dataclass(frozen=True)
 class Unresolved:
     word: str  # the pointing word, as found
     missing: str  # for missing_information, e.g. "which bill"
-    question: str  # the question to ask back
+    question: str  # the question to ask back, in the shopkeeper's language
 
 
 def _named(entities: Entities, text: str) -> bool:
@@ -153,7 +203,7 @@ def _pointing_kind(words: list[str], i: int) -> str | None:
 
 
 def unresolved_reference(
-    text: str, intent: str, entities: Entities, history: str
+    text: str, intent: str, entities: Entities, history: str, *, language: Language = "en"
 ) -> Unresolved | None:
     """The question to ask back when the request points at something nobody named."""
     if intent in SKIPPED_INTENTS or history.strip() or ids_in(text) or _named(entities, text):
@@ -166,6 +216,5 @@ def unresolved_reference(
         if kind in ("person", "thing"):
             fallback = "customer" if kind == "person" else "any"
             kind = INTENT_KIND.get(intent, fallback)
-        missing, question = QUESTIONS[kind]
-        return Unresolved(word=word, missing=missing, question=question)
+        return Unresolved(word=word, missing=MISSING[kind], question=QUESTIONS[language][kind])
     return None

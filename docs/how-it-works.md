@@ -257,7 +257,7 @@ python -m scripts.seed          # load the 50 synthetic shops
 python -m scripts.ingest        # embed the knowledge base (needs an AI key or gateway)
 python -m scripts.eval_retrieval  # retrieval quality: hit@5 must be at least 0.8
 python -m scripts.check_llm     # can the chosen models chat, follow a schema, call tools?
-python -m scripts.eval_agent --temperature 0 --pause 30   # the 40 cases (needs a model)
+python -m scripts.eval_agent --temperature 0 --pause 30   # the 45 cases (needs a model)
 pytest                          # the whole test suite, no API key needed
 uvicorn app.main:app --reload   # then open http://localhost:8000/docs
 ```

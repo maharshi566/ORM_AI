@@ -38,6 +38,7 @@ from app.agents import (
     validator,
 )
 from app.agents.common import AgentOutcome, citations_in
+from app.agents.language import SECTION_TITLES, Language, language_of
 from app.agents.response import describe_action, describe_result
 from app.core.logging import get_logger
 from app.graph.deps import AgentDeps
@@ -151,8 +152,12 @@ async def _clarify(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
     )
 
 
-def render_reply(draft: dict[str, Any], allowed: set[str], *, verified: bool) -> str:
-    """The FinalResponse as Markdown, with any unknown citation removed."""
+def render_reply(
+    draft: dict[str, Any], allowed: set[str], *, verified: bool, language: Language = "en"
+) -> str:
+    """The FinalResponse as Markdown, with any unknown citation removed. The section
+    titles are in the request's language, like the text the model wrote."""
+    titles = SECTION_TITLES[language]
 
     def clean(text: str) -> str:
         for citation in citations_in(text):
@@ -162,11 +167,8 @@ def render_reply(draft: dict[str, Any], allowed: set[str], *, verified: bool) ->
 
     lines = [clean(draft.get("answer") or "")]
     sections = [
-        ("From your records", draft.get("facts")),
-        ("Shop rules that apply", draft.get("evidence")),
-        ("Suggested next steps", draft.get("next_steps")),
-        ("Proposed, not done yet (needs your approval)", draft.get("pending_approval")),
-        ("Done", draft.get("completed_actions")),
+        (titles[key], draft.get(key))
+        for key in ("facts", "evidence", "next_steps", "pending_approval", "completed_actions")
     ]
     for title, items in sections:
         items = [clean(item) for item in items or [] if clean(item)]
@@ -175,9 +177,7 @@ def render_reply(draft: dict[str, Any], allowed: set[str], *, verified: bool) ->
     if draft.get("follow_up_question"):
         lines.append(f"\n{clean(draft['follow_up_question'])}")
     if not verified:
-        lines.append(
-            "\n_Note: parts of this answer could not be fully checked against your records._"
-        )
+        lines.append(f"\n_{titles['unverified']}_")
     return "\n".join(lines).strip()
 
 
@@ -216,7 +216,7 @@ async def _finalize(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
             summary="finished: failed",
         )
     verified = state.get("validation_result") == "PASS"
-    reply = render_reply(draft, set(allowed), verified=verified)
+    reply = render_reply(draft, set(allowed), verified=verified, language=language_of(state))
     cited = [
         c for c in dict.fromkeys(citations_in(reply) + draft.get("citations", [])) if c in allowed
     ]

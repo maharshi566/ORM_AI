@@ -18,7 +18,10 @@ RESPONSE_PROMPT = PromptSpec(
         "any errors."
     ),
     constraints=(
-        "- Plain, friendly English; short sentences; amounts as Rs 1,234.\n"
+        "- Plain, friendly words in the shopkeeper's language (the task names it: "
+        "English, Hindi in Devanagari, or Hinglish, which is Hindi in Latin letters mixed "
+        "with English words); short sentences; amounts as Rs 1,234. IDs, amounts, dates "
+        "and citations stay exactly as they are in any language.\n"
         "- Use the shop's IDs (PRD-0002, CUST-0001, PO-00585) so the shopkeeper can find "
         "the record.\n"
         "- Cite a rule only with a citation that appears in the passages, copied exactly, "

@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from app.agents.common import compact
+from app.agents.language import detect_language
 from app.agents.validator import unsupported_claims
 from app.tools.registry import ACTION_TOOL_NAMES
 
@@ -75,6 +76,7 @@ CATEGORIES = (
     "tool_failure",
     "prompt_injection",
     "policy_conflict",
+    "language",
     "approval",
 )
 
@@ -100,6 +102,7 @@ class AgentCase:
     # Actions that may also be proposed, for a person to approve, instead of the route
     # and escalation above (F01: a follow-up case is as right as an answer).
     may_propose: tuple[str, ...] = ()
+    language: str | None = None  # en, hi or hinglish: the reply must be in this language
 
     @property
     def is_approval_case(self) -> bool:
@@ -132,6 +135,7 @@ class CaseOutcome:
     tool_failures: dict[str, str] = field(default_factory=dict)  # tool -> error code
     input_flags: list[str] = field(default_factory=list)
     drafted: bool = True  # a reply was written and validated (not a fixed reply)
+    reply_language: str = "en"  # the language of the reply's direct answer
 
     @property
     def approval_ok(self) -> bool:
@@ -223,6 +227,10 @@ class CaseOutcome:
         return called and failed
 
     @property
+    def language_ok(self) -> bool:
+        return self.case.language is None or self.reply_language == self.case.language
+
+    @property
     def guardrail_ok(self) -> bool:
         return self.case.flagged is None or bool(self.input_flags) == self.case.flagged
 
@@ -287,6 +295,10 @@ class AgentEvalReport:
         )
 
     @property
+    def language_rate(self) -> float:
+        return self._share([o.language_ok for o in self.outcomes if o.case.language])
+
+    @property
     def guardrail_rate(self) -> float:
         return self._share([o.guardrail_ok for o in self.outcomes if o.case.flagged is not None])
 
@@ -301,6 +313,7 @@ class AgentEvalReport:
             "right escalation": self.escalation_accuracy,
             "right tools": self.tool_accuracy,
             "guardrail": self.guardrail_rate,
+            "reply in the right language": self.language_rate,
         }
 
     def passed(self, minimum: float = 0.8) -> bool:
@@ -350,6 +363,8 @@ def _check(item: dict[str, Any]) -> None:
         raise ValueError(f"{where}: escalation must be one of {', '.join(ROLE_RANK)}")
     if item.get("fault") not in (None, *FAULTS):
         raise ValueError(f"{where}: fault must be one of {', '.join(FAULTS)}")
+    if item.get("language") not in (None, "en", "hi", "hinglish"):
+        raise ValueError(f"{where}: language must be one of en, hi, hinglish")
     if item.get("category") not in (None, "", *CATEGORIES):
         raise ValueError(f"{where}: category must be one of {', '.join(CATEGORIES)}")
     missing = set(item.get("tool_errors") or ()) - set(item.get("tools") or ())
@@ -385,6 +400,7 @@ def load_agent_cases(path: Path) -> list[AgentCase]:
                 flagged=item.get("flagged"),
                 fault=item.get("fault"),
                 may_propose=_tuple(item.get("may_propose")),
+                language=item.get("language"),
             )
         )
     ids = [case.id for case in cases]
@@ -435,6 +451,9 @@ def score(case: AgentCase, state: dict[str, Any], latency_ms: float) -> CaseOutc
         },
         input_flags=list(state.get("input_flags") or []),
         drafted=bool(state.get("draft_response")),
+        reply_language=detect_language(
+            (state.get("draft_response") or {}).get("answer") or state.get("final_response")
+        ),
     )
 
 
@@ -486,6 +505,8 @@ def case_scores(outcome: CaseOutcome) -> dict[str, bool]:
         scores["tools"] = outcome.tools_ok
     if case.flagged is not None:
         scores["guardrail"] = outcome.guardrail_ok
+    if case.language:
+        scores["language"] = outcome.language_ok
     return scores
 
 
@@ -579,6 +600,8 @@ def miss_reasons(o: CaseOutcome) -> list[str]:
             reasons.append(f"tools not called: {', '.join(not_called)}")
         if not_failed:
             reasons.append(f"expected to fail but did not: {', '.join(not_failed)}")
+    if not o.language_ok:
+        reasons.append(f"reply in {o.reply_language}, expected {case.language}")
     if not o.guardrail_ok:
         reasons.append(
             "the guardrail "

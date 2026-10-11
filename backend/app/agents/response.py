@@ -30,6 +30,7 @@ from app.agents.common import (
     render_records,
     request_header,
 )
+from app.agents.language import LANGUAGE_NAMES, language_of
 from app.agents.schemas import FinalResponse
 from app.graph.deps import AgentDeps
 from app.prompts.response_prompt import RESPONSE_PROMPT
@@ -98,7 +99,7 @@ def _task(state: dict[str, Any], deps: AgentDeps) -> str:
             "Your previous draft was rejected. Fix these problems:\n- "
             + "\n- ".join(state["validation_feedback"])
         )
-    parts.append("Write the reply.")
+    parts.append(f"Write the reply in {LANGUAGE_NAMES[language_of(state)]}.")
     return "\n\n".join(parts)
 
 

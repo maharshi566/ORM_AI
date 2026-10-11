@@ -75,6 +75,46 @@ PASSIVE_CLAIM = re.compile(
     r"\b(?:has|have) been\s+(?:successfully\s+|now\s+|just\s+)?(?P<verb>[a-z]+)\b",
     re.IGNORECASE,
 )
+# Hinglish and Hindi claims of a finished action: "reminder bhej diya", "maine order de
+# diya hai", "refund process kar diya", "भेज दिया". Hindi seldom says who acted, so any
+# such claim counts, unless its sentence dates it as a fact from the records (below).
+DONE = r"(?:diya|di|diye|dia|dii|chuka|chuki|chuke)"
+HINGLISH_CLAIM = re.compile(
+    rf"\b(?P<stem>bhej|badal|khol|bana|maa?f)\s+{DONE}\b"
+    rf"|\b(?P<object>[a-z]+)\s+(?:kar|kr|de)\s+{DONE}\b"
+    r"|(?P<hstem>भेज|बदल|माफ़?)\s*(?:दिया|दी|दिए|चुका|चुकी|चुके)"
+    r"|(?P<hobject>रिफंड|ऑर्डर|आर्डर|अपडेट|दर्ज|रिकॉर्ड|केस)\s+(?:कर|दे)\s*(?:दिया|दी|दिए)",
+    re.IGNORECASE,
+)
+# What each Hinglish or Hindi word claims, as the English verb CLAIM_TOOLS knows.
+HINGLISH_VERBS = {
+    **dict.fromkeys(["bhej", "send", "भेज"], "sent"),
+    **dict.fromkeys(["message", "msg"], "messaged"),
+    **dict.fromkeys(["remind"], "reminded"),
+    **dict.fromkeys(["badal", "change", "बदल"], "changed"),
+    **dict.fromkeys(["update", "अपडेट"], "updated"),
+    **dict.fromkeys(["khol", "open"], "opened"),
+    **dict.fromkeys(["bana", "create", "केस"], "created"),
+    **dict.fromkeys(["maaf", "maf", "waive", "माफ", "माफ़"], "waived"),
+    **dict.fromkeys(["process", "return"], "processed"),
+    **dict.fromkeys(["refund", "wapas", "रिफंड"], "refunded"),
+    **dict.fromkeys(["order", "ऑर्डर", "आर्डर"], "ordered"),
+    **dict.fromkeys(["place"], "placed"),
+    **dict.fromkeys(["submit"], "submitted"),
+    **dict.fromkeys(["record", "darj", "entry", "दर्ज", "रिकॉर्ड"], "recorded"),
+    **dict.fromkeys(["adjust"], "adjusted"),
+    **dict.fromkeys(["close"], "closed"),
+    **dict.fromkeys(["resolve"], "resolved"),
+    **dict.fromkeys(["cancel"], "cancelled"),
+    **dict.fromkeys(["delete"], "deleted"),
+    **dict.fromkeys(["approve"], "approved"),
+    **dict.fromkeys(["clear"], "cleared"),
+}
+# Hinglish and Hindi words that date a sentence ("pichle hafte bhej diya tha").
+PAST_EVENT_HI = re.compile(
+    r"\b(?:tha|thi|the|pehle|pahle|pichh?le|pichh?li|already|ago)\b|था|थी|थे|पहले|पिछले",
+    re.IGNORECASE,
+)
 # Words that date a passive sentence, which makes it a fact from the records.
 PAST_EVENT = re.compile(
     r"\b(?:already|times|ago|earlier|previously|before|last|yesterday|since|"
@@ -163,6 +203,17 @@ def unsupported_claims(text: str, state: dict[str, Any]) -> list[str]:
             continue  # "has been sent three times already": a fact from the records
         if tools and (tools & proposed) and not (tools & succeeded):
             claims.append(verb)
+    for match in HINGLISH_CLAIM.finditer(text):
+        word = next(g for g in match.groups() if g).lower()
+        tools = CLAIM_TOOLS.get(HINGLISH_VERBS.get(word, ""))
+        if tools is None or (tools & succeeded):
+            continue
+        stops = (".", "\n", "।")  # the danda ends a Hindi sentence
+        start = max(text.rfind(stop, 0, match.start()) for stop in stops) + 1
+        ends = [i for i in (text.find(stop, match.end()) for stop in stops) if i != -1]
+        if PAST_EVENT_HI.search(text[start : min(ends) if ends else len(text)]):
+            continue  # "pichle hafte bhej diya tha": a fact from the records
+        claims.append(match.group(0))
     return list(dict.fromkeys(claims))
 
 

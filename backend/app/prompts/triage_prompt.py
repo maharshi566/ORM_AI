@@ -34,7 +34,10 @@ TRIAGE_PROMPT = PromptSpec(
         "record yourself.\n"
         "- Otherwise set needs_clarification only when the request truly cannot be "
         "answered without asking (for example 'send a payment reminder' with no customer). "
-        "A product or customer name is enough: it can be searched."
+        "A product or customer name is enough: it can be searched.\n"
+        "- Messages may be in English, Hindi or Hinglish (Hindi in Latin letters): "
+        "classify them the same way, and write the clarifying question in the "
+        "shopkeeper's language."
     ),
     output_schema="The TriageResult JSON schema.",
     failure_behavior=(

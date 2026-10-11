@@ -59,6 +59,7 @@ class AgentState(TypedDict, total=False):
     # --- Triage ------------------------------------------------------------
     triage: dict[str, Any] | None  # the full TriageResult
     input_flags: list[str]  # what the input guardrail found (app/agents/guardrails.py)
+    language: str  # en, hi or hinglish: the reply's language (app/agents/language.py)
     intent: str | None
     entities: dict[str, Any]
     missing_information: list[str]

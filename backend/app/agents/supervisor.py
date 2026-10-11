@@ -22,6 +22,7 @@ import re
 from typing import Any
 
 from app.agents.common import AgentOutcome
+from app.agents.language import OUT_OF_SCOPE, language_of
 from app.graph.deps import AgentDeps
 
 # Which specialists each intent needs. "data" = shop records, "knowledge" = shop rules.
@@ -56,10 +57,7 @@ INVESTIGATE: frozenset[str] = frozenset(
 # Words that make a stock question a reorder question (rules and an investigation).
 REORDER_WORDS = re.compile(r"\b(?:re-?order\w*|order more|restock\w*|stock up)\b", re.IGNORECASE)
 
-OUT_OF_SCOPE_REPLY = (
-    "I can help with this shop's stock, sales, purchase orders, suppliers, customer "
-    "credit (udhaar) and shop rules. Could you ask me something about those?"
-)
+OUT_OF_SCOPE_REPLY = OUT_OF_SCOPE["en"]
 
 
 def make_plan(triage: dict[str, Any], query: str = "") -> list[str]:
@@ -105,7 +103,7 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
     route, reason = next_step(state, plan or [])
     update["route"] = route
     if route == "finalize" and (state.get("triage") or {}).get("intent") == "out_of_scope":
-        update["final_response"] = OUT_OF_SCOPE_REPLY
+        update["final_response"] = OUT_OF_SCOPE[language_of(state)]
     summary = f"next: {route} ({reason})"
     if "plan" in update:
         summary = f"plan: {' -> '.join(plan or ['respond'])}; {summary}"

@@ -1,4 +1,4 @@
-"""The 40-case agent evaluation (Phases 4, 5 and 8), run with the scripted model.
+"""The 45-case agent evaluation (Phases 4, 5 and 8, then Hinglish), with the scripted model.
 
 The real gate runs with a real model (python -m scripts.eval_agent). Here the model is
 scripted, so this checks everything around it: that each case's tools return the
@@ -31,11 +31,11 @@ from tests.fake_llm import RuleBasedLLM
 DATASET = BACKEND_DIR / "evaluation" / "datasets" / "agent_cases.yaml"
 
 
-def test_the_dataset_has_forty_cases_in_seven_categories() -> None:
+def test_the_dataset_has_45_cases_in_eight_categories() -> None:
     cases = load_agent_cases(DATASET)
     kinds = [c.kind for c in cases]
 
-    assert len(cases) == 40 and len({c.id for c in cases}) == 40
+    assert len(cases) == 45 and len({c.id for c in cases}) == 45
     assert {kind: kinds.count(kind) for kind in set(kinds)} == {
         "normal": 10,
         "approval": 5,
@@ -44,10 +44,14 @@ def test_the_dataset_has_forty_cases_in_seven_categories() -> None:
         "tool_failure": 5,
         "prompt_injection": 5,
         "policy_conflict": 5,
+        "language": 5,
     }
     assert [c.id for c in cases if c.is_approval_case] == ["H01", "H02", "H03", "H04", "H05"]
-    # Every Phase 8 case says which route it should take and who should be asked.
-    assert all(c.route and c.escalation for c in cases if c.kind not in {"normal", "approval"})
+    # Every Phase 8 case says which route it should take and who should be asked; the
+    # language cases are normal questions in Hinglish or Hindi, and say their language.
+    phase8 = [c for c in cases if c.kind not in {"normal", "approval", "language"}]
+    assert all(c.route and c.escalation for c in phase8)
+    assert all(c.language for c in cases if c.kind == "language")
 
 
 async def test_the_cases_pass_with_the_scripted_model(make_deps, run_agent) -> None:
@@ -65,7 +69,7 @@ async def test_the_cases_pass_with_the_scripted_model(make_deps, run_agent) -> N
     assert report.passed()
     assert all(rate == 1.0 for rate in report.rates().values()), report.rates()
     markdown = to_markdown(report)
-    assert "**PASS**: 40 of 40 cases" in markdown
+    assert "**PASS**: 45 of 45 cases" in markdown
     assert "| prompt injection | 5 | 5 |" in markdown and "| P05 |" in markdown
 
 

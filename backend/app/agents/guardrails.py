@@ -26,30 +26,46 @@ MAX_MESSAGE_CHARS = 2000
 
 # Text that tries to change how ORM_AI behaves rather than ask about the shop.
 INJECTION_PATTERNS: dict[str, re.Pattern[str]] = {
+    # Each pattern also has Hinglish and Hindi phrasings ("apne rules bhool jao",
+    # "bina pooche", "नियम भूल जाओ"); Devanagari has no \b, so those parts do without.
     "override_instructions": re.compile(
         r"\b(?:ignore|disregard|forget|override)\b[^.\n]{0,40}"
-        r"\b(?:instructions?|rules?|polic(?:y|ies)|guidelines?|prompts?|approvals?)\b",
+        r"\b(?:instructions?|rules?|polic(?:y|ies)|guidelines?|prompts?|approvals?)\b"
+        r"|\b(?:rules?|niyam\w*|instructions?|polic(?:y|ies))\b[^.\n]{0,30}"
+        r"\b(?:bh[ou]+l\s+ja(?:a?o)|bh[ou]+lo|bh[ou]+la\s+do|ignore\s+kar(?:o|\s+do)|"
+        r"chh?od\s+do|nazarandaz\s+kar(?:o|\s+do))\b"
+        r"|(?:नियम|रूल)[^.\n।]{0,30}(?:भूल जाओ|भुला दो|अनदेखा करो|छोड़ दो)",
         re.IGNORECASE,
     ),
     "skip_approval": re.compile(
         r"\b(?:without|skip(?:ping)?|bypass(?:ing)?|no need for|don'?t need)\b[^.\n]{0,25}"
         r"\b(?:approv\w*|permission|owner'?s? (?:ok|consent))\b"
-        r"|\bapprove\b[^.\n]{0,40}\b(?:automatically|all|every)\b",
+        r"|\bapprove\b[^.\n]{0,40}\b(?:automatically|all|every)\b"
+        r"|\bbina\b[^.\n]{0,25}\b(?:approv\w*|p[ou]+chh?e|permission|ijazat|anumati|owner)\b"
+        r"|\b(?:approval|permission|ijazat)\b[^.\n]{0,15}\b(?:zaroor|zarur)at nahi\b"
+        r"|बिना[^.\n।]{0,25}(?:पूछे|अनुमति|मंज़ूरी|मंजूरी|इजाज़त|अप्रूवल)",
         re.IGNORECASE,
     ),
     "hide_from_owner": re.compile(
         r"\b(?:do not|don'?t|never|without)\s+(?:tell|telling|inform|informing|notify|"
-        r"notifying|show|showing)\b[^.\n]{0,20}\b(?:owner|shop ?keeper|anyone|staff)\b",
+        r"notifying|show|showing)\b[^.\n]{0,20}\b(?:owner|shop ?keeper|anyone|staff)\b"
+        r"|\b(?:owner|malik|maalik|seth|kisi)\b[^.\n]{0,12}\b(?:mat|na)\s+"
+        r"(?:batao|batana|bataiye|bataana|dikhao|dikhana)\b"
+        r"|(?:मालिक|ओनर|किसी)[^.\n।]{0,12}(?:मत|ना)\s*(?:बताओ|बताना|बताइए|दिखाओ)",
         re.IGNORECASE,
     ),
     "new_role": re.compile(
         r"\byou are (?:now|no longer)\b|\bact as (?:an?|the) (?:admin|owner|developer|system)\b"
-        r"|\b(?:developer|god|jailbreak|dan) mode\b",
+        r"|\b(?:developer|god|jailbreak|dan) mode\b"
+        r"|\b(?:tum|aap)\s+ab\s+(?:owner|admin|malik|maalik)\b"
+        r"|(?:तुम|आप)\s+अब\s+(?:मालिक|ओनर|एडमिन)",
         re.IGNORECASE,
     ),
     "reveal_prompt": re.compile(
         r"\b(?:reveal|show|print|repeat|tell me)\b[^.\n]{0,20}"
-        r"\b(?:system prompt|your (?:prompt|instructions|rules))\b",
+        r"\b(?:system prompt|your (?:prompt|instructions|rules))\b"
+        r"|\b(?:system prompt|apne (?:rules|instructions|niyam))\b[^.\n]{0,20}"
+        r"\b(?:dikhao|batao|bataiye|dikhaiye)\b",
         re.IGNORECASE,
     ),
     "fake_system_message": re.compile(
@@ -59,7 +75,11 @@ INJECTION_PATTERNS: dict[str, re.Pattern[str]] = {
     ),
     "mass_change": re.compile(
         r"\b(?:mark|set|make)\b[^.\n]{0,30}\b(?:all|every)\b[^.\n]{0,40}"
-        r"\b(?:paid|cleared|zero|approved|written off)\b",
+        r"\b(?:paid|cleared|zero|approved|written off)\b"
+        r"|\b(?:sab|sabhi|saare|sare|sabka|sabki)\b[^.\n]{0,40}"
+        r"\b(?:udhaa?r|baaki|bakaya|balance|dues)\b[^.\n]{0,30}"
+        r"\b(?:maa?f|clear|zero|paid|khatam|nil)\b"
+        r"|(?:सब|सभी|सारे)[^.\n।]{0,40}(?:उधार|बकाया)[^.\n।]{0,30}(?:माफ|माफ़|साफ|ख़त्म|खत्म|शून्य)",
         re.IGNORECASE,
     ),
 }

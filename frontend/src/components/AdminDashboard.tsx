@@ -23,6 +23,7 @@ const SCORE_LABEL: Record<string, string> = {
   escalation: "Asked the right person",
   tools: "Used the right tools, and reported failures",
   guardrail: "Caught the rule-bending message",
+  language: "Replied in the shopkeeper's language",
 };
 const SCORE_SHORT: Record<string, string> = {
   intent: "Intent",
@@ -35,6 +36,7 @@ const SCORE_SHORT: Record<string, string> = {
   escalation: "Asked",
   tools: "Tools",
   guardrail: "Guard",
+  language: "Language",
 };
 // The evaluation set's categories, in the order the report lists them.
 const CATEGORY_LABEL: Record<string, string> = {
@@ -45,6 +47,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   tool_failure: "Tool failures",
   prompt_injection: "Prompt injection",
   policy_conflict: "Policy conflicts",
+  language: "Hinglish and Hindi",
 };
 const STATUSES = ["", "completed", "awaiting_approval", "failed", "blocked", "running"] as const;
 // Agents in the order a request meets them.

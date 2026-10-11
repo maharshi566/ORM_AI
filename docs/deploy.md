@@ -140,7 +140,7 @@ again.) Leave `AUTH_DEMO_USERS` empty on a deployment with real shop data.
 - **Update:** `git pull`, then the same `up -d --build --wait` command. Migrations run on start.
 - **Back up the database:**
   `docker compose -f docker-compose.prod.yml --env-file .env.prod exec postgres pg_dump -U orm_ai orm_ai > backup.sql`
-- **Run the evaluation against the deployed model:** the 40 cases ship with the image.
+- **Run the evaluation against the deployed model:** the 45 cases ship with the image.
   `docker compose -f docker-compose.prod.yml --env-file .env.prod exec backend python -m scripts.eval_agent --temperature 0 --pause 30`.
   The admin page (as an admin) shows the run.
 - **Logs:** `docker compose -f docker-compose.prod.yml logs -f backend` (JSON lines; phone

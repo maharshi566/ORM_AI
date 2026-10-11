@@ -86,7 +86,10 @@ class TriageResult(BaseModel):
     intent: Intent
     category: Category
     priority: Literal["low", "normal", "high", "urgent"]
-    summary: str = Field(description="The request restated in one plain sentence")
+    summary: str = Field(
+        description="The request restated in one plain English sentence, whatever the "
+        "message's language (it is used to search the shop's English documents)"
+    )
     entities: Entities
     missing_information: list[str] = Field(
         description="Facts needed to answer that the request does not give, if any"
