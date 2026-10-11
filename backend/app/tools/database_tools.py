@@ -23,6 +23,7 @@ from app.models import (
     StockMovement,
     Supplier,
 )
+from app.models.types import CaseCategory
 from app.tools.base import ToolContext, ToolInput, ToolOutput, ToolSpec
 from app.tools.helpers import (
     days_late,
@@ -741,7 +742,10 @@ class CaseHistoryInput(ToolInput):
     customer_id: str | None = None
     product_id: str | None = None
     supplier_id: str | None = None
-    category: str | None = None
+    # The allowed values, so a model sees them in the tool's schema and a wrong one is
+    # refused as invalid input. A free string once reached the database as a supplier's
+    # name ("Metro FMCG Agency") and crashed the query (Gemini evaluation, I05).
+    category: CaseCategory | None = None
     status: Literal["open", "resolved"] | None = None
     limit: int = Field(default=10, ge=1, le=50)
 

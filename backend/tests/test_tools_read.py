@@ -176,6 +176,19 @@ async def test_case_history_and_supplier_record(registry, make_ctx, seed_data) -
     assert supplier["late_or_short_orders"] >= 1
 
 
+async def test_a_wrong_case_category_is_refused_not_crashed(registry, make_ctx) -> None:
+    """Gemini once passed a supplier's name as the category; the query crashed."""
+    wrong = await registry.call(
+        "get_case_history", {"category": "Metro FMCG Agency"}, make_ctx(), agent=AGENT
+    )
+    right = await call(registry, make_ctx(), "get_case_history", category="credit_dispute")
+
+    assert not wrong.ok and wrong.error_code == "invalid_input"
+    assert all(c["category"] == "credit_dispute" for c in right["cases"])
+    schema = registry.spec("get_case_history").input_model.model_json_schema()
+    assert "credit_dispute" in str(schema)  # the model sees the allowed values
+
+
 async def test_supplier_price_check(registry, make_ctx, seed_data) -> None:
     case = seed_data.edge_cases["negative_margin"]
     data = await call(
