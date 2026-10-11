@@ -8,6 +8,7 @@ flags the injection cases, and that the scoring and the report work.
 """
 
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -189,6 +190,24 @@ def test_the_report_breaks_results_down_by_category() -> None:
     markdown = to_markdown(report)
     assert "**FAIL**: 1 of 2 cases" in markdown
     assert "- route answer, expected clarify" in markdown
+
+
+async def test_the_pause_between_cases_is_not_counted_as_case_time() -> None:
+    """The first Gemini run counted --pause 30 inside every case after the first, so
+    a two-second clarifying question showed as 32 seconds."""
+    cases = [
+        AgentCase(id=f"X0{n}", shop_id="SHOP-001", message="?", intents=("pricing",))
+        for n in (1, 2, 3)
+    ]
+    started = time.perf_counter()
+
+    async def run_one(case):
+        return {}
+
+    report = await run_cases(cases, run_one, pause_s=0.2)
+
+    assert time.perf_counter() - started >= 0.4  # waited between cases, not before the first
+    assert all(o.latency_ms < 100 for o in report.outcomes)
 
 
 @pytest.mark.parametrize(

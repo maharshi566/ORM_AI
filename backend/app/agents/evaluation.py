@@ -42,6 +42,7 @@ saved to the ``evaluations`` table, one row per case (``save_report``), so the a
 page shows the scores without anyone opening the report file.
 """
 
+import asyncio
 import math
 import time
 import uuid
@@ -426,10 +427,17 @@ def _claim_text(state: dict[str, Any]) -> str:
 
 
 async def run_cases(
-    cases: list[AgentCase], run_one: Callable[[AgentCase], Awaitable[dict[str, Any]]]
+    cases: list[AgentCase],
+    run_one: Callable[[AgentCase], Awaitable[dict[str, Any]]],
+    *,
+    pause_s: float = 0,
 ) -> AgentEvalReport:
+    """Run each case in turn and score it. ``pause_s`` waits between cases (free tiers
+    with a per-minute limit) before the clock starts, so it never counts as case time."""
     outcomes = []
-    for case in cases:
+    for index, case in enumerate(cases):
+        if pause_s and index:
+            await asyncio.sleep(pause_s)
         started = time.perf_counter()
         try:
             state = await run_one(case)

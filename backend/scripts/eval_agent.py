@@ -172,8 +172,6 @@ async def run(args: argparse.Namespace) -> int:
             "conversation_history": [],
         }
         config = {"configurable": {"thread_id": workflow_id}, "recursion_limit": RECURSION_LIMIT}
-        if args.pause and case is not cases[0]:
-            await asyncio.sleep(args.pause)
         print(f"{case.id} [{case.kind}] {case.message[:64]} ...", flush=True)
         context = deps_for(case)
         result = await graph.ainvoke(state, config=config, context=context)
@@ -191,7 +189,7 @@ async def run(args: argparse.Namespace) -> int:
     print(f"Running {len(cases)} case(s) with {models} at {llm.endpoint.where}\n")
     saved = ""
     try:
-        report = await run_cases(cases, run_one)
+        report = await run_cases(cases, run_one, pause_s=args.pause)
         report.models = models
         if not args.no_save:
             try:
