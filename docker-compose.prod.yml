@@ -63,6 +63,13 @@ services:
       UPLOAD_DIR: /app/data/uploads
       LOG_JSON: "true"
       AUTH_DEMO_USERS: ${AUTH_DEMO_USERS:-}
+      # The API is reachable only through the proxy in front (it listens on 127.0.0.1),
+      # so the proxy's X-Forwarded-For can be trusted: rate limits see each visitor.
+      FORWARDED_ALLOW_IPS: "*"
+      # true: load the demo shops into an empty database, and update the knowledge
+      # index at every start (backend/scripts/start.py).
+      SEED_IF_EMPTY: ${SEED_IF_EMPTY:-false}
+      INGEST_ON_START: ${INGEST_ON_START:-false}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     volumes:

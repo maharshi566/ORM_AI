@@ -24,15 +24,17 @@ COPY --chown=appuser:appuser scripts ./scripts
 COPY --chown=appuser:appuser migrations ./migrations
 COPY --chown=appuser:appuser alembic.ini ./
 COPY --chown=appuser:appuser knowledge_base ./knowledge_base
-# The 40 evaluation cases, so the gate can run against a deployment's own model
+# The 45 evaluation cases, so the gate can run against a deployment's own model
 # (docker compose exec backend python -m scripts.eval_agent); reports are written here.
 COPY --chown=appuser:appuser evaluation ./evaluation
 
 USER appuser
 EXPOSE 8000
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=4)"
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["python", "-m", "scripts.healthcheck"]
 
-# Apply database migrations, then start the API.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Apply database migrations, then start the API on PORT (8000 unless the host sets it).
+# SEED_IF_EMPTY and INGEST_ON_START add the demo data and the knowledge index
+# (scripts/start.py).
+CMD ["python", "-m", "scripts.start"]

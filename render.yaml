@@ -1,0 +1,78 @@
+# Render Blueprint: the ORM_AI backend and its Redis (docs/deploy.md, "C. Render, Vercel
+# and Supabase"). In Render: New > Blueprint > this repository. Render asks for the values
+# marked "sync: false" (never commit them); everything else is set here.
+#
+# The free plan sleeps after 15 idle minutes (the first request then takes about a
+# minute) and has no persistent disk, so the server loads the demo shops into an empty
+# database and rebuilds the knowledge index at every start (scripts/start.py).
+
+services:
+  - type: web
+    name: orm-ai-api
+    runtime: docker
+    rootDir: backend
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore # closest to India; put the Supabase project in Singapore too
+    healthCheckPath: /api/health/live
+    autoDeployTrigger: commit
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: DATABASE_URL # Supabase > Connect > Session pooler (port 5432), with your password
+        sync: false
+      - key: CORS_ORIGINS # the website's address, e.g. https://orm-ai.vercel.app
+        sync: false
+      - key: LLM_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta/openai
+      - key: LLM_API_KEY # your Gemini key (aistudio.google.com/apikey)
+        sync: false
+      - key: LLM_MODEL_FAST
+        value: gemini-3.5-flash-lite
+      - key: LLM_MODEL_SMART
+        value: gemini-3.8-flash
+      - key: EMBEDDING_MODEL
+        value: hash # offline search; gemini-embedding-001 for meaning search (docs/rag.md)
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: orm-ai-redis
+          property: connectionString
+      - key: RATE_LIMIT_STORAGE
+        fromService:
+          type: keyvalue
+          name: orm-ai-redis
+          property: connectionString
+      - key: FORWARDED_ALLOW_IPS # Render's proxy: rate limits see each visitor's address
+        value: "*"
+      # The public demo on the synthetic shops: visitors pick one of these accounts.
+      - key: AUTH_DEMO_USERS
+        value: USR-001,USR-002,USR-003,USR-004
+      - key: BUSINESS_DATE # the synthetic data's "today"
+        value: "2026-09-30"
+      - key: SEED_IF_EMPTY
+        value: "true"
+      - key: INGEST_ON_START
+        value: "true"
+      - key: OTP_CHANNEL # whatsapp once WhatsApp is set up (docs/whatsapp.md)
+        value: "off"
+      - key: MESSAGING_PROVIDER
+        value: mock
+      - key: BRIEFING_CRON_SECRET # copy it into the GitHub secret of the same name
+        generateValue: true
+      - key: LOG_JSON
+        value: "true"
+      - key: SENTRY_DSN # optional (docs/monitoring.md)
+        sync: false
+
+  - type: keyvalue
+    name: orm-ai-redis
+    plan: free
+    region: singapore
+    ipAllowList: [] # reachable only from this account's services
+    maxmemoryPolicy: allkeys-lru

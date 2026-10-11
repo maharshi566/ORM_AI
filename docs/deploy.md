@@ -88,7 +88,8 @@ pooler (port 6543) also set `DB_TRANSACTION_POOLER=true`.
 are shared by every backend process.
 
 **Backend: Render or Railway.** Create a web service from this repository, built from
-`backend/Dockerfile` (root directory `backend`). Health check path: `/api/health`. Set:
+`backend/Dockerfile` (root directory `backend`). Health check path: `/api/health/live`
+(the process is up; `/api/health` also checks the database and Redis). Set:
 
 | Variable | Value |
 | --- | --- |
@@ -110,6 +111,64 @@ each deploy). Then open the service's shell once and run `python -m scripts.seed
 the environment variable `NEXT_PUBLIC_API_URL` with the backend's public address. Vercel
 detects Next.js and builds it. `NEXT_PUBLIC_API_URL` is built into the JavaScript: after
 changing it, redeploy. Finally put the Vercel address in the backend's `CORS_ORIGINS`.
+
+## C. Render, Vercel and Supabase (free tiers)
+
+The setup in `render.yaml`: the backend and a Redis on Render, the website on Vercel,
+the database on Supabase. All three have free plans. Mind what free means: the Render
+service sleeps after 15 idle minutes (the first request then takes about a minute),
+and a Supabase project pauses after a week without use (one click wakes it).
+
+**1. The database (Supabase, about 5 minutes).**
+Create a project at <https://supabase.com/dashboard> in the **Singapore** region (next to
+Render's Singapore servers, and the closest to India); write down the database password
+it shows. Then **Connect** → **Session pooler**: copy the connection string, put your
+password in it, and add `?sslmode=require` at the end. Keep it for step 2; it is a
+secret. Nothing else is needed: the server creates the tables and loads the demo shops
+itself on its first start.
+
+**2. The backend (Render, about 10 minutes).**
+At <https://dashboard.render.com>: **New** → **Blueprint** → connect your GitHub account
+and pick this repository. Render reads `render.yaml` and asks for the secrets:
+
+| Asked for | Value |
+| --- | --- |
+| `DATABASE_URL` | the Supabase string from step 1 |
+| `LLM_API_KEY` | your Gemini key |
+| `CORS_ORIGINS` | the website's address from step 3 (enter `https://example.com` for now) |
+| `SENTRY_DSN` | empty, or your Sentry DSN ([monitoring.md](monitoring.md)) |
+
+Render builds the image (5-10 minutes the first time), runs the migrations, loads the
+demo shops into the empty database, builds the knowledge index and starts. Its address
+is shown at the top, for example `https://orm-ai-api.onrender.com`;
+`/api/health` there should say `ok`.
+
+**3. The website (Vercel, about 5 minutes).**
+At <https://vercel.com/new>: import this repository, set **Root Directory** to
+`frontend`, and add the environment variable `NEXT_PUBLIC_API_URL` with the Render
+address from step 2. Deploy. Then go back to Render → the service → **Environment** and
+set `CORS_ORIGINS` to the Vercel address (for example `https://orm-ai.vercel.app`), and
+save (Render restarts the service).
+
+**4. Try it.** Open the Vercel address: the login page offers the demo users
+(`AUTH_DEMO_USERS` in `render.yaml`). To add real logins, make the first owner in
+Render's **Shell** (paid plans), or on your own computer against the same database:
+
+```powershell
+$env:DATABASE_URL = "<the Supabase string>"
+python -m scripts.create_user --name "Ramesh Naidu" --role owner --shop SHOP-001 --email you@example.com
+```
+
+**5. Optional.** The morning briefing: copy Render's generated `BRIEFING_CRON_SECRET`
+into a GitHub repository secret of the same name, and add `BRIEFING_URL` (the Render
+address) ([briefing.md](briefing.md)). WhatsApp: [whatsapp.md](whatsapp.md), then set
+`MESSAGING_PROVIDER` and `OTP_CHANNEL` to `whatsapp` on Render.
+
+**What the free plan does not keep.** Render's free disk is wiped at every restart: the
+knowledge index is rebuilt each time (under a second with the offline `hash` embedder),
+but documents uploaded through the admin page are lost. Keep documents in
+`backend/knowledge_base/` in the repository instead, or use a paid Render disk mounted at
+`/app/data`.
 
 ## A public demo
 
