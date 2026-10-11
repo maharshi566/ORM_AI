@@ -117,6 +117,15 @@ where the user wants something done (`wants_action`) always gets an investigatio
 triage says a question must be asked first ("Send him a reminder", with no earlier
 message saying who), the workflow ends with that question.
 
+A request that points at something nobody named always gets a question back, whatever
+the model decided (`agents/references.py`). "Can they bring it back for a refund?",
+"Has that order arrived?" or "Is it still in stock?", with no ID, no name and no earlier
+message, ends with "Which bill is it?", "Which purchase order do you mean?" or "Which
+product do you mean?". The check knows when such a word does have something to point at:
+"Which products are low? Reorder any of them" (an earlier word), "this week" (a date),
+"is it okay to …" (an "it" that points at nothing). In a follow-up message the model
+decides, since it reads the earlier messages.
+
 Two loops, each capped by `AGENT_MAX_LOOPS` (default 2), so a workflow always ends:
 
 - **Need more data.** The investigation can ask for specific records ("stock movements
@@ -520,7 +529,10 @@ a person. The four misses:
 
 - **Q05** "Can they bring it back for a refund?": a real miss. Instead of asking who
   and what, it took the shop's only open return case, answered about that sale, and
-  proposed resolving the case. It was right this time, but it guessed.
+  proposed resolving the case. It was right this time, but it guessed. **Fixed since**:
+  triage now asks back in code when a request points at nothing named (section 3), and
+  its prompt says so; with Gemini, Q01 to Q05 all ask back (Q05 in 1.7 s, about 840
+  tokens, where the guess took 38 s and 36,000).
 - **F01** (the supplier's system times out): it said so, worked out the margin from
   the records (−3.4%, below the 8% minimum, so the owner decides) and proposed opening a
   case; the dataset expected an answer only. A sensible extra step, still a miss.

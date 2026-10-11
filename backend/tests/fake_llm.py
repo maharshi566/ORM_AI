@@ -258,6 +258,7 @@ class RuleBasedLLM:
         judge_unsupported: int = 0,
         bad_arguments: int = 0,
         ignore_reminder_gap: bool = False,
+        never_clarify: bool = False,
     ) -> None:
         self.fail = set(fail)
         self.more_data = more_data
@@ -269,6 +270,8 @@ class RuleBasedLLM:
         self.judge_unsupported = judge_unsupported
         self.bad_arguments = bad_arguments
         self.ignore_reminder_gap = ignore_reminder_gap
+        # Guesses instead of asking back, as Gemini did on Q05 ("Can they bring it back?").
+        self.never_clarify = never_clarify
         self.repair_requests: list[str] = []
         self.calls: list[str] = []
 
@@ -327,7 +330,9 @@ class RuleBasedLLM:
         wants_action = intent in {"payment_reminder"} or any(
             w in request.lower() for w in ACTION_WORDS
         )
-        unclear = _clarification(request, intent, entities, wants_action)
+        unclear = (
+            None if self.never_clarify else _clarification(request, intent, entities, wants_action)
+        )
         return TriageResult(
             intent=intent,
             category=CATEGORIES.get(intent, "general"),

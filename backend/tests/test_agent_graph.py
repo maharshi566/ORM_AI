@@ -115,6 +115,19 @@ async def test_an_unclear_request_gets_a_question_back(make_deps, run_agent) -> 
     assert path(state) == ["triage", "supervisor", "clarify", "finalize"]
 
 
+async def test_a_request_that_names_nothing_is_asked_back_even_if_the_model_guesses(
+    make_deps, run_agent
+) -> None:
+    """Q05 with Gemini: the model went ahead and answered about a likely return case."""
+    llm = RuleBasedLLM(never_clarify=True)
+    state = await run_agent(make_deps(llm), "Can they bring it back for a refund?")
+
+    assert state["outcome"] == "needs_clarification"
+    assert state["final_response"].startswith("Which bill is it?")
+    assert path(state) == ["triage", "supervisor", "clarify", "finalize"]
+    assert llm.calls == ["triage"] and not state.get("tool_results")
+
+
 async def test_the_investigation_can_ask_for_more_data(make_deps, run_agent) -> None:
     state = await run_agent(
         make_deps(RuleBasedLLM(more_data=1)),

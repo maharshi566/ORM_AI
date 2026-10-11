@@ -7,7 +7,9 @@ which specialists are needed. Uses the fast model with structured output
 
 The model's IDs are checked in code: an ID is kept only if it appears in the
 conversation, and IDs written in the request are always added. So a mistyped or
-invented ID can never send the data agent to the wrong record.
+invented ID can never send the data agent to the wrong record. For the same reason, a
+request that points at something nobody named ("Can they bring it back?") always gets
+a question back, whatever the model decided (app/agents/references.py).
 
 Before the model sees the message, the input guardrail (app/agents/guardrails.py)
 removes control characters, caps the length and flags text that tries to change
@@ -27,6 +29,7 @@ from app.agents.common import (
     today_line,
 )
 from app.agents.guardrails import check_input
+from app.agents.references import unresolved_reference
 from app.agents.schemas import Entities, TriageResult
 from app.graph.deps import AgentDeps
 from app.prompts.triage_prompt import TRIAGE_PROMPT
@@ -59,7 +62,15 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
         tier="fast",
     )
     result = reply.value
-    result.entities = ground_entities(result.entities, state["user_query"], history_text(state))
+    history = history_text(state)
+    result.entities = ground_entities(result.entities, state["user_query"], history)
+    unresolved = unresolved_reference(checked.text, result.intent, result.entities, history)
+    if unresolved:
+        # "Can they bring it back?" with nothing named: ask, never guess a record.
+        result.needs_clarification = True
+        result.clarifying_question = result.clarifying_question or unresolved.question
+        if unresolved.missing not in result.missing_information:
+            result.missing_information.append(unresolved.missing)
     if result.needs_clarification and not result.clarifying_question:
         result.needs_clarification = False  # nothing to ask: answer as well as possible
     triage = result.model_dump()
@@ -85,6 +96,7 @@ async def run(state: dict[str, Any], deps: AgentDeps) -> AgentOutcome:
             f"intent={result.intent}, priority={result.priority}, "
             f"confidence={result.confidence:.2f}, route={'+'.join(result.recommended_route)}"
             + (", needs clarification" if result.needs_clarification else "")
+            + (f' ("{unresolved.word}" names nothing)' if unresolved else "")
             + (f", flagged: {'+'.join(checked.flags)}" if checked.flagged else "")
         ),
         usage=reply.usage,

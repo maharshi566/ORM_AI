@@ -6,6 +6,7 @@ import pytest
 
 from app.agents.common import citations_in, ids_in, record_key
 from app.agents.investigation import check_actions, check_result
+from app.agents.references import unresolved_reference
 from app.agents.retrieval import fallback_calls
 from app.agents.schemas import (
     Evidence,
@@ -47,6 +48,60 @@ def test_ids_from_earlier_messages_are_allowed() -> None:
     grounded = ground_entities(entities, "send him a reminder", history="CUST-0004 owes Rs 694")
 
     assert grounded.customer_ids == ["CUST-0004"]
+
+
+@pytest.mark.parametrize(
+    ("message", "intent", "word", "missing"),
+    [
+        ("Is it still in stock?", "stock_status", "it", "which product"),
+        ("How much does he owe me now?", "customer_credit", "he", "which customer"),
+        ("Has that order arrived yet?", "supplier_issue", "that", "which purchase order"),
+        ("Is that one priced correctly?", "pricing", "that", "which product"),
+        ("Can they bring it back for a refund?", "returns", "they", "which bill"),
+        ("Remind him to pay.", "payment_reminder", "him", "which customer"),
+        ("Is it true that he paid?", "customer_credit", "he", "which customer"),
+        ("Is that allowed?", "policy_question", "that", "what the request refers to"),
+    ],
+)
+def test_a_request_pointing_at_nothing_named_is_asked_back(message, intent, word, missing):
+    unresolved = unresolved_reference(message, intent, empty_entities(), history="")
+
+    assert unresolved is not None
+    assert (unresolved.word, unresolved.missing) == (word, missing)
+    assert unresolved.question.endswith(".") and "?" in unresolved.question
+
+
+@pytest.mark.parametrize(
+    ("message", "intent"),
+    [
+        ("Which products are running low, and should I reorder any of them?", "reorder"),
+        ("Which customers have not paid in 30 days? Send them reminders.", "payment_reminder"),
+        ("What were my sales this week?", "sales_report"),  # a date, not a pointer
+        ("Is it okay to give credit to a household customer?", "customer_credit"),
+        ("Is it possible to return a product after 10 days?", "returns"),
+        ("A customer wants to return bill SALE-005668. Is that allowed?", "returns"),
+        ("Is there a festival offer this month? Summarise it.", "supplier_issue"),
+        ("How does this work?", "general_help"),
+    ],
+)
+def test_a_request_whose_pointer_has_something_to_point_at_is_left_alone(message, intent):
+    assert unresolved_reference(message, intent, empty_entities(), history="") is None
+
+
+def test_a_name_or_an_earlier_message_can_resolve_the_pointer() -> None:
+    named = empty_entities()
+    named.product_names = ["Amul ghee"]
+    invented = empty_entities()
+    invented.customer_names = ["they", "Ramesh"]  # neither is a name in the message
+
+    assert (
+        unresolved_reference("Is Amul ghee in stock? Is it low?", "stock_status", named, "") is None
+    )
+    assert (
+        unresolved_reference("Remind him", "payment_reminder", empty_entities(), "CUST-0004")
+        is None
+    )
+    assert unresolved_reference("Can they bring it back?", "returns", invented, "") is not None
 
 
 # --------------------------------------------------------------- supervisor

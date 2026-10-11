@@ -28,9 +28,13 @@ TRIAGE_PROMPT = PromptSpec(
         "using today's date.\n"
         "- priority: urgent for money or stock lost right now, high for dues 30+ days or "
         "deliveries 3+ days late, low for general questions, normal otherwise.\n"
-        "- Set needs_clarification only when the request truly cannot be answered without "
-        "asking (for example 'send him a reminder' with no earlier message naming him). A "
-        "product or customer name is enough: it can be searched."
+        "- Set needs_clarification when the message points at something ('he', 'they', "
+        "'it', 'that order', 'this one') and neither it nor an earlier message says which "
+        "product, customer, bill or order that is. Ask which one; never pick a likely "
+        "record yourself.\n"
+        "- Otherwise set needs_clarification only when the request truly cannot be "
+        "answered without asking (for example 'send a payment reminder' with no customer). "
+        "A product or customer name is enough: it can be searched."
     ),
     output_schema="The TriageResult JSON schema.",
     failure_behavior=(
