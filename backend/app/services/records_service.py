@@ -482,6 +482,16 @@ async def list_approvals(
     )
 
 
+def _mean_quality(cases: list[Any]) -> float | None:
+    """The AI judge's mean overall grade for a run, when its cases were graded."""
+    grades = [
+        float(q["overall"])
+        for c in cases
+        if isinstance(q := (c.details or {}).get("quality"), dict) and "overall" in q
+    ]
+    return round(sum(grades) / len(grades), 2) if grades else None
+
+
 async def list_evaluations(
     factory: async_sessionmaker[AsyncSession], principal: Principal | None, *, limit: int = 5
 ) -> EvaluationsResponse:
@@ -534,6 +544,8 @@ async def list_evaluations(
                 cases=len(cases),
                 passed=sum(1 for c in cases if c.passed),
                 scores={k: round(sum(v) / len(v), 3) for k, v in totals.items() if v},
+                quality=_mean_quality(cases),
+                batch=next(((c.details or {}).get("batch") for c in cases if c.details), None),
                 results=[
                     EvaluationCaseView(
                         case_id=c.case_id,

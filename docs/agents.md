@@ -494,8 +494,28 @@ Each case states what it expects, and is scored on: **intent**, **records** fetc
 rule **cited**, reply **grounded** (the validator passed it), **no false claims** of
 action, and where the case states them, **approval** (H cases), **route** (answer, ask
 back, or wait for a person), **escalation** (nobody, staff or owner), **tools** (called,
-and failed when they should have) and **guardrail** (flagged or not). The gate passes
-when every rate is at least 0.8.
+and failed when they should have), **guardrail** (flagged or not) and **language** (the
+reply's language, for the L cases). The gate passes when every rate is at least 0.8.
+
+**Answer quality: an AI judge.** The checks are about behaviour; they cannot tell a clear,
+useful answer from a correct but clumsy one. So after each case the smart model grades
+the reply from 1 to 5 on **correctness** (every number, ID and rule matches the records
+shown), **helpfulness** (answers what was asked; asking back counts when the request is
+unclear), **clarity** and **language**, plus **overall**, with a one-line reason
+(`agents/judge.py`, `prompts/quality_judge_prompt.py`). The judge is told what a good
+reply does for the case's category, but not whether the case passed. The grades are in
+the report, the console and the admin page, and are **not part of the gate**: a model
+grading its own family's answers tends to be generous, so they stay a second opinion
+until compared with grades from people. `--no-judge` skips them (one call less per case).
+
+**Consistency: the same cases, several times.** One run is one sample; a model can pass
+a case once and miss it the next time, even at temperature 0. `--repeat 3` runs the set
+three times, saves each run (the admin page labels them "run 1 of 3"), and writes
+`agent-<model>-consistency.md`: the share of cases that passed in every run (pass^3) and
+in at least one (pass@3), the flaky cases with their reasons, and each rate's lowest,
+mean and highest value. If three cases in a row fail on the model's rate limit or quota
+(a free tier's daily limit), the run stops there and no further run starts, so a spent
+quota does not turn into a column of false misses.
 
 The script prints each case as pass or MISS with the reasons, writes a report to
 `backend/evaluation/reports/` (rates, results by category, time per case at the median
@@ -511,6 +531,8 @@ database).
 | `--pause 30` | Wait between cases, for free tiers with a per-minute limit |
 | `--temperature 0` | Repeatable answers (or `LLM_TEMPERATURE=0` in `.env`); reasoning models reject it |
 | `--allow-unpinned` | Run with a model name that can change without notice (`...-latest`); refused otherwise, so stored scores always belong to one known model |
+| `--repeat 3` | Run the set three times and report how consistent it is |
+| `--no-judge` | Skip the AI judge's answer-quality grades |
 | `--no-save` | Do not store the run in the database |
 
 The same 45 cases run in the test suite with the scripted model (`tests/test_agent_eval.py`),

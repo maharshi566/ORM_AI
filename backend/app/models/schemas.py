@@ -544,6 +544,12 @@ class EvaluationRunView(BaseModel):
     cases: int
     passed: int
     scores: dict[str, float] = Field(description="Each score's average over the run's cases")
+    quality: float | None = Field(
+        default=None, description="The AI judge's mean overall grade, 1 to 5 (when graded)"
+    )
+    batch: dict[str, Any] | None = Field(
+        default=None, description="For repeated runs (eval_agent --repeat): id, run, of"
+    )
     results: list[EvaluationCaseView]
 
 

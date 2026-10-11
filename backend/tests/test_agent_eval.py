@@ -17,12 +17,15 @@ from app.agents.evaluation import (
     AgentCase,
     AgentEvalReport,
     CaseOutcome,
+    ConsistencyReport,
     case_scores,
+    consistency_markdown,
     load_agent_cases,
     miss_reasons,
     run_cases,
     to_markdown,
 )
+from app.agents.judge import grade
 from app.config.paths import BACKEND_DIR
 from app.tools.api_tools import FaultInjector
 from tests.conftest import approval_request
@@ -237,6 +240,80 @@ def test_the_report_breaks_results_down_by_category() -> None:
     markdown = to_markdown(report)
     assert "**FAIL**: 1 of 2 cases" in markdown
     assert "- route answer, expected clarify" in markdown
+
+
+async def test_the_judge_grades_each_reply_and_the_report_shows_it(make_deps, run_agent) -> None:
+    cases = [c for c in load_agent_cases(DATASET) if c.id in {"A07", "Q01"}]
+    llm = RuleBasedLLM()
+
+    async def run_one(case):
+        return await run_agent(make_deps(llm), case.message, shop_id=case.shop_id)
+
+    async def judge(case, state, outcome):
+        return await grade(llm, case, state, outcome.route_taken)
+
+    report = await run_cases(cases, run_one, judge=judge)
+
+    assert all(o.quality and 1 <= o.quality["overall"] <= 5 for o in report.outcomes)
+    assert set(report.quality_means()) == {
+        "correctness",
+        "helpfulness",
+        "clarity",
+        "language",
+        "overall",
+    }
+    markdown = to_markdown(report)
+    assert "## Answer quality (AI judge, 1 to 5)" in markdown and "Lowest graded:" in markdown
+    assert "Not part of the gate" in markdown
+    assert report.passed()  # the grades never change the gate
+
+
+async def test_a_failing_judge_leaves_the_case_scored_but_ungraded() -> None:
+    async def run_one(case):
+        return {}
+
+    async def broken(case, state, outcome):
+        raise RuntimeError("judge down")
+
+    [outcome] = (await run_cases([_case()], run_one, judge=broken)).outcomes
+
+    assert outcome.quality is None and "the judge failed (RuntimeError)" in outcome.warnings
+
+
+async def test_the_run_stops_when_the_quota_runs_out() -> None:
+    cases = [
+        AgentCase(id=f"X0{n}", shop_id="SHOP-001", message="?", intents=("pricing",))
+        for n in range(1, 7)
+    ]
+    ran = []
+
+    async def run_one(case):
+        ran.append(case.id)
+        return {"errors": ["triage failed: Google Gemini: rate limit reached (free quota)"]}
+
+    report = await run_cases(cases, run_one, stop_on_quota=True)
+
+    assert ran == ["X01", "X02", "X03"] and len(report.outcomes) == 3
+    assert "3 cases in a row" in report.stopped
+    assert "**Incomplete:**" in to_markdown(report)
+
+
+def test_repeated_runs_show_flaky_cases_and_the_spread_of_each_rate() -> None:
+    steady, shaky = (
+        _case(),
+        AgentCase(id="X02", shop_id="SHOP-001", message="?", intents=("pricing",)),
+    )
+    first = AgentEvalReport(outcomes=[_outcome(steady), _outcome(shaky)])
+    second = AgentEvalReport(outcomes=[_outcome(steady), _outcome(shaky, intent="returns")])
+
+    consistency = ConsistencyReport([first, second])
+
+    assert consistency.flaky() == [("X02", 1, 2)]
+    assert consistency.always_pass_rate == 0.5 and consistency.ever_pass_rate == 1.0
+    assert consistency.rate_spread()["intent accuracy"] == (0.5, 0.75, 1.0)
+    markdown = consistency_markdown(consistency)
+    assert "pass^2" in markdown and "**X02** passed 1 of 2" in markdown
+    assert "intent returns, expected pricing" in markdown
 
 
 async def test_the_pause_between_cases_is_not_counted_as_case_time() -> None:

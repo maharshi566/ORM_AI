@@ -345,6 +345,12 @@ function Evaluation({ runs }: { runs: EvaluationRunView[] }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-ink-2">
           {when(run.created_at)}, {run.cases} cases, {run.passed} passed every check
+          {run.batch ? ` (run ${run.batch.run} of ${run.batch.of})` : ""}
+          {run.quality !== null && run.quality !== undefined ? (
+            <span className="block text-sm">
+              Answer quality (AI judge): <span className="font-semibold text-ink">{run.quality.toFixed(1)} / 5</span>
+            </span>
+          ) : null}
           {run.models ? <span className="block text-sm text-ink-3">Models: {run.models}</span> : null}
         </p>
         {runs.length > 1 ? (
@@ -353,7 +359,7 @@ function Evaluation({ runs }: { runs: EvaluationRunView[] }) {
             <select value={index} onChange={(e) => setIndex(Number(e.target.value))} className="rounded-md border border-rule bg-sheet px-2 py-1 text-ink">
               {runs.map((r, i) => (
                 <option key={r.run_id} value={i}>
-                  {when(r.created_at)} ({r.passed}/{r.cases})
+                  {when(r.created_at)} ({r.passed}/{r.cases}){r.batch ? ` run ${r.batch.run}/${r.batch.of}` : ""}
                 </option>
               ))}
             </select>

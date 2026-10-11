@@ -39,6 +39,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from app.agents.common import CITATION, ids_of_kind
+from app.agents.judge import QualityVerdict
 from app.agents.language import detect_language
 from app.agents.schemas import FinalResponse, InvestigationResult, TriageResult, empty_entities
 from app.agents.validator import GroundednessVerdict
@@ -312,6 +313,20 @@ class RuleBasedLLM:
         elif schema is FinalResponse:
             self._maybe_fail("respond")
             value = self._response(task)
+        elif schema is QualityVerdict:
+            self._maybe_fail("judge")
+            # A plain grader: a reply that cites a rule or asks back is good, one that
+            # does neither is merely usable, an empty one is useless.
+            reply = task.split("<reply>", 1)[-1].split("</reply>", 1)[0].strip()
+            grade = 1 if not reply else (5 if "[" in reply or "?" in reply else 3)
+            value = QualityVerdict(
+                correctness=grade,
+                helpfulness=grade,
+                clarity=4,
+                language=5,
+                overall=grade,
+                rationale="Scripted judge.",
+            )
         elif schema is GroundednessVerdict:
             self._maybe_fail("validate")
             unsupported = self.judge_unsupported > 0

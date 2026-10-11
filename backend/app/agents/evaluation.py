@@ -48,6 +48,7 @@ page shows the scores without anyone opening the report file.
 
 import asyncio
 import math
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -58,6 +59,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from app.agents.common import compact
+from app.agents.judge import DIMENSIONS
 from app.agents.language import detect_language
 from app.agents.validator import unsupported_claims
 from app.tools.registry import ACTION_TOOL_NAMES
@@ -136,6 +138,7 @@ class CaseOutcome:
     input_flags: list[str] = field(default_factory=list)
     drafted: bool = True  # a reply was written and validated (not a fixed reply)
     reply_language: str = "en"  # the language of the reply's direct answer
+    quality: dict[str, Any] | None = None  # the AI judge's grades (app/agents/judge.py)
 
     @property
     def approval_ok(self) -> bool:
@@ -256,6 +259,17 @@ def _percentile(values: list[float], share: float) -> float:
 class AgentEvalReport:
     outcomes: list[CaseOutcome]
     models: str = ""
+    batch: dict[str, Any] | None = None  # {"id", "run", "of"} when one of repeated runs
+    stopped: str = ""  # why the run ended before its last case (the free quota ran out)
+
+    def quality_means(self, kind: str | None = None) -> dict[str, float]:
+        """The judge's mean grade per dimension (empty when nothing was judged)."""
+        graded = [
+            o.quality for o in self.outcomes if o.quality and (kind is None or o.case.kind == kind)
+        ]
+        if not graded:
+            return {}
+        return {d: round(sum(q[d] for q in graded) / len(graded), 2) for d in DIMENSIONS}
 
     def _share(self, values: list[bool]) -> float:
         return round(sum(values) / len(values), 3) if values else 1.0
@@ -464,15 +478,34 @@ def _claim_text(state: dict[str, Any]) -> str:
     return "\n".join(parts) if draft else ""
 
 
+Judge = Callable[[AgentCase, dict[str, Any], "CaseOutcome"], Awaitable[dict[str, Any] | None]]
+QUOTA_WORDS = re.compile(r"rate.?limit|quota|resource.?exhausted|\b429\b", re.IGNORECASE)
+QUOTA_STREAK = 3  # cases in a row that failed on the quota: the rest would fail too
+
+
+def out_of_quota(outcomes: list["CaseOutcome"], streak: int = QUOTA_STREAK) -> bool:
+    """True when the last ``streak`` cases all failed on a rate limit or the quota."""
+    last = outcomes[-streak:]
+    return len(last) == streak and all(
+        any(QUOTA_WORDS.search(error) for error in o.errors) for o in last
+    )
+
+
 async def run_cases(
     cases: list[AgentCase],
     run_one: Callable[[AgentCase], Awaitable[dict[str, Any]]],
     *,
     pause_s: float = 0,
+    judge: Judge | None = None,
+    stop_on_quota: bool = False,
 ) -> AgentEvalReport:
     """Run each case in turn and score it. ``pause_s`` waits between cases (free tiers
-    with a per-minute limit) before the clock starts, so it never counts as case time."""
-    outcomes = []
+    with a per-minute limit) before the clock starts, so it never counts as case time.
+
+    ``judge`` grades each reply after its time is taken (app/agents/judge.py); a judge
+    that fails leaves that case ungraded. ``stop_on_quota`` ends the run when three cases
+    in a row failed on the model's rate limit or quota, instead of failing the rest."""
+    report = AgentEvalReport(outcomes=[])
     for index, case in enumerate(cases):
         if pause_s and index:
             await asyncio.sleep(pause_s)
@@ -481,8 +514,20 @@ async def run_cases(
             state = await run_one(case)
         except Exception as exc:  # one broken case must not hide the others
             state = {"errors": [f"{type(exc).__name__}: {exc}"]}
-        outcomes.append(score(case, state, (time.perf_counter() - started) * 1000))
-    return AgentEvalReport(outcomes=outcomes)
+        outcome = score(case, state, (time.perf_counter() - started) * 1000)
+        if judge is not None and not outcome.errors:
+            try:
+                outcome.quality = await judge(case, state, outcome)
+            except Exception as exc:  # an ungraded case is still scored
+                outcome.warnings.append(f"the judge failed ({type(exc).__name__})")
+        report.outcomes.append(outcome)
+        if stop_on_quota and out_of_quota(report.outcomes):
+            report.stopped = (
+                f"stopped after {case.id}: {QUOTA_STREAK} cases in a row failed on the "
+                "model's rate limit or quota"
+            )
+            break
+    return report
 
 
 def case_scores(outcome: CaseOutcome) -> dict[str, bool]:
@@ -544,6 +589,9 @@ def evaluation_rows(report: AgentEvalReport, run_id: str) -> list[dict[str, Any]
                     "input_tokens": o.input_tokens,
                     "output_tokens": o.output_tokens,
                     "answer": o.answer[:1500],
+                    "quality": o.quality,
+                    "reply_language": o.reply_language,
+                    "batch": report.batch,
                 },
             }
         )
@@ -612,6 +660,40 @@ def miss_reasons(o: CaseOutcome) -> list[str]:
     return reasons
 
 
+def _quality_section(report: AgentEvalReport) -> list[str]:
+    """The AI judge's grades: means per dimension and category, and the lowest replies."""
+    means = report.quality_means()
+    if not means:
+        return []
+    graded = [o for o in report.outcomes if o.quality]
+    lines = [
+        "",
+        "## Answer quality (AI judge, 1 to 5)",
+        "",
+        f"{len(graded)} of {len(report.outcomes)} replies graded by the smart model "
+        "(app/agents/judge.py). Not part of the gate: a model grading its own family "
+        "tends to be generous.",
+        "",
+        "| " + " | ".join(DIMENSIONS) + " |",
+        "| " + " | ".join("---" for _ in DIMENSIONS) + " |",
+        "| " + " | ".join(f"{means[d]:.2f}" for d in DIMENSIONS) + " |",
+        "",
+        "| Category | Overall |",
+        "| --- | --- |",
+    ]
+    for category, _, _ in report.by_category():
+        overall = report.quality_means(category).get("overall")
+        if overall is not None:
+            lines.append(f"| {category.replace('_', ' ')} | {overall:.2f} |")
+    lowest = sorted(graded, key=lambda o: (o.quality["overall"], o.case.id))[:3]  # type: ignore[index]
+    lines += ["", "Lowest graded:", ""]
+    lines += [
+        f"- **{o.case.id}** {o.quality['overall']}/5: {o.quality.get('rationale', '')}"  # type: ignore[index]
+        for o in lowest
+    ]
+    return lines
+
+
 def to_markdown(report: AgentEvalReport, *, minimum: float = 0.8) -> str:
     verdict = "PASS" if report.passed(minimum) else "FAIL"
     tokens_in, tokens_out = report.tokens
@@ -642,20 +724,24 @@ def to_markdown(report: AgentEvalReport, *, minimum: float = 0.8) -> str:
     ]
     for category, total, passed in report.by_category():
         lines.append(f"| {category.replace('_', ' ')} | {total} | {passed} |")
+    if report.stopped:
+        lines[4:4] = [f"**Incomplete:** {report.stopped}.", ""]
+    lines += _quality_section(report)
     lines += [
         "",
         "## Cases",
         "",
-        "| Case | Category | Intent | Route | Escalation | Documents | Validator | Time (s) "
-        "| Tokens in/out |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Case | Category | Intent | Route | Escalation | Documents | Validator | Quality "
+        "| Time (s) | Tokens in/out |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for o in report.outcomes:
+        grade = f"{o.quality['overall']}/5" if o.quality else "-"
         lines.append(
             f"| {o.case.id} | {o.case.kind.replace('_', ' ')} | {_mark(o.intent_ok)} {o.intent} "
             f"| {_mark(o.route_ok)} {o.route_taken} | {_mark(o.escalation_ok)} "
             f"{o.escalation_taken} | {_mark(o.documents_ok)} {', '.join(o.cited_documents) or '-'} "
-            f"| {o.validation or '-'} | {o.latency_ms / 1000:.1f} "
+            f"| {o.validation or '-'} | {grade} | {o.latency_ms / 1000:.1f} "
             f"| {o.input_tokens}/{o.output_tokens} |"
         )
     misses = [o for o in report.outcomes if not o.passed]
@@ -671,4 +757,114 @@ def to_markdown(report: AgentEvalReport, *, minimum: float = 0.8) -> str:
             for error in o.errors[:3]:
                 lines.append(f"- error: {error}")
             lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+# --- Consistency: the same cases, run several times (eval_agent --repeat) --------
+
+
+@dataclass
+class ConsistencyReport:
+    """How often each case passes over repeated runs, and how far each rate moves.
+
+    A model can pass a case once and miss it the next time, even at temperature 0. One
+    run shows a score; several show whether it holds. "Always passed" (pass^k) is the
+    share of cases that passed in every run; "passed at least once" (pass@k) the share
+    that passed in some run. A flaky case is one in between.
+    """
+
+    reports: list[AgentEvalReport]
+
+    def case_results(self) -> dict[str, list[bool]]:
+        results: dict[str, list[bool]] = {}
+        for report in self.reports:
+            for o in report.outcomes:
+                results.setdefault(o.case.id, []).append(o.passed)
+        return results
+
+    def flaky(self) -> list[tuple[str, int, int]]:
+        """(case, runs it passed, runs it ran) for every case that both passed and missed."""
+        return [
+            (case_id, sum(runs), len(runs))
+            for case_id, runs in self.case_results().items()
+            if 0 < sum(runs) < len(runs)
+        ]
+
+    @property
+    def always_pass_rate(self) -> float:
+        results = list(self.case_results().values())
+        return round(sum(all(r) for r in results) / len(results), 3) if results else 0.0
+
+    @property
+    def ever_pass_rate(self) -> float:
+        results = list(self.case_results().values())
+        return round(sum(any(r) for r in results) / len(results), 3) if results else 0.0
+
+    def rate_spread(self) -> dict[str, tuple[float, float, float]]:
+        """Each gated rate's lowest, mean and highest value over the runs."""
+        spread = {}
+        for name in self.reports[0].rates():
+            values = [r.rates()[name] for r in self.reports]
+            spread[name] = (min(values), round(sum(values) / len(values), 3), max(values))
+        return spread
+
+    def quality_spread(self) -> tuple[float, float, float] | None:
+        overall = [r.quality_means()["overall"] for r in self.reports if r.quality_means()]
+        if not overall:
+            return None
+        return min(overall), round(sum(overall) / len(overall), 2), max(overall)
+
+
+def consistency_markdown(report: ConsistencyReport, *, minimum: float = 0.8) -> str:
+    runs = report.reports
+    messages = {o.case.id: o.case.message for r in runs for o in r.outcomes}
+    every_gate = all(r.passed(minimum) for r in runs)
+    lines = [
+        "# Agent evaluation: consistency",
+        "",
+        f"Models: {runs[0].models or 'not recorded'}",
+        "",
+        f"{len(runs)} runs of {len(report.case_results())} cases. Gate {minimum} passed in "
+        f"{sum(r.passed(minimum) for r in runs)} of {len(runs)} runs"
+        + (" (every run)." if every_gate else "."),
+        "",
+        f"- Always passed (pass^{len(runs)}): {report.always_pass_rate:.2f} of the cases",
+        f"- Passed at least once (pass@{len(runs)}): {report.ever_pass_rate:.2f}",
+        f"- Flaky (passed in some runs, missed in others): {len(report.flaky())}",
+    ]
+    quality = report.quality_spread()
+    if quality:
+        lines.append(
+            f"- Answer quality (AI judge, overall): {quality[1]:.2f} on average, "
+            f"from {quality[0]:.2f} to {quality[2]:.2f}"
+        )
+    stopped = [f"run {i}: {r.stopped}" for i, r in enumerate(runs, 1) if r.stopped]
+    if stopped:
+        lines += ["", "**Incomplete:** " + "; ".join(stopped) + "."]
+    lines += [
+        "",
+        "| Rate | Lowest | Mean | Highest | Gate in every run |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for name, (low, mean, high) in report.rate_spread().items():
+        lines.append(f"| {name} | {low:.2f} | {mean:.2f} | {high:.2f} | {_mark(low >= minimum)} |")
+    lines += ["", "| Run | Passed | Gate |", "| --- | --- | --- |"]
+    for i, r in enumerate(runs, 1):
+        passed = sum(o.passed for o in r.outcomes)
+        lines.append(
+            f"| {i} | {passed} of {len(r.outcomes)} | {'PASS' if r.passed(minimum) else 'FAIL'} |"
+        )
+    flaky = report.flaky()
+    if flaky:
+        lines += ["", "## Flaky cases", ""]
+        for case_id, passes, total in flaky:
+            lines.append(f"- **{case_id}** passed {passes} of {total}: {messages[case_id]}")
+            misses = [
+                reason
+                for r in runs
+                for o in r.outcomes
+                if o.case.id == case_id and not o.passed
+                for reason in miss_reasons(o)
+            ]
+            lines += [f"  - {reason}" for reason in dict.fromkeys(misses)]
     return "\n".join(lines).rstrip() + "\n"

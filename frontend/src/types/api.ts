@@ -413,6 +413,8 @@ export type EvaluationRunView = {
   cases: number;
   passed: number;
   scores: Record<string, number>;
+  quality: number | null; // the AI judge's mean overall grade, 1 to 5
+  batch: { id: string; run: number; of: number } | null; // one of repeated runs
   results: EvaluationCaseView[];
 };
 
