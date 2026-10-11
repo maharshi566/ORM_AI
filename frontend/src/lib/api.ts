@@ -14,6 +14,7 @@ import type {
   DevUser,
   EvaluationsResponse,
   HealthResponse,
+  IngestJobResponse,
   MeResponse,
   MetricsResponse,
   SessionListItem,
@@ -22,6 +23,7 @@ import type {
   StageEvent,
   StreamErrorEvent,
   TokenResponse,
+  UploadResponse,
   WorkflowListItem,
   WorkflowResponse,
 } from "@/types/api";
@@ -269,3 +271,17 @@ export const getWorkflow = (workflowId: string, signal?: AbortSignal) =>
 export const getMetrics = (signal?: AbortSignal) => getJson<MetricsResponse>("/api/metrics", signal);
 
 export const getEvaluations = (signal?: AbortSignal) => getJson<EvaluationsResponse>("/api/evaluations", signal);
+
+// ------------------------------------------------------------------ documents
+
+/** POST /api/documents/upload: a multipart form (file, title, category, trusted, shop_id). */
+export async function uploadDocument(form: FormData): Promise<UploadResponse> {
+  // No Content-Type header: the browser sets the multipart boundary itself.
+  return (await (await send("/api/documents/upload", { method: "POST", body: form })).json()) as UploadResponse;
+}
+
+/** POST /api/documents/ingest (owners and admins): re-ingest everything in the background. */
+export const startIngestion = () => postJson<IngestJobResponse>("/api/documents/ingest", {});
+
+export const getIngestJob = (jobId: string, signal?: AbortSignal) =>
+  getJson<IngestJobResponse>(`/api/documents/ingest/${encodeURIComponent(jobId)}`, signal);

@@ -53,7 +53,7 @@ Next.js.
 | `/login` | everyone | Pick a demo user (on your own computer), or paste a token from a real login system |
 | `/chat` | logged in | Your conversations on the left; the conversation in the middle; on the right, how the selected request went: each workflow stage, the sources it cited (with the passage), the tools it called and what it cost |
 | `/approvals` | logged in | Everything waiting for a person in your shop, with the full approval slip; and every decision made |
-| `/admin` | logged in | Requests by status, each agent's runs, errors and time (average and slowest 5%), each tool's calls and failures, recent requests, and the evaluation scores (admins) |
+| `/admin` | logged in | Requests by status, each agent's runs, errors and time (average and slowest 5%), each tool's calls and failures, recent requests, adding documents to the knowledge base (with ingestion progress), and the evaluation scores (admins) |
 | `/workflows/{id}` | logged in | The full record of one request: answer, every agent step, every tool call with its arguments, approvals, stages and sources |
 
 A shop's owner and staff see only their own shop. The admin (USR-101) sees every shop and
@@ -131,7 +131,7 @@ src/
     chat/ChatWorkspace    conversations, entries, composer, live updates
     chat/RequestPanel     the stage rail, sources and tools (also used on the record page)
     ApprovalSlip          the slip: evidence, rules, Approve / Modify / Reject, the stamp
-    ApprovalsInbox, AdminDashboard, WorkflowRecord, SiteHeader, BackendStatus, Markdown, ui
+    ApprovalsInbox, AdminDashboard, DocumentUpload, WorkflowRecord, SiteHeader, BackendStatus, Markdown, ui
   lib/
     api.ts                every call to the backend, errors, the stream
     login.ts              who is logged in (localStorage + useSyncExternalStore)

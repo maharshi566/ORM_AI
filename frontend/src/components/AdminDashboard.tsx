@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 
+import { DocumentUpload } from "@/components/DocumentUpload";
 import { RequireLogin } from "@/components/RequireLogin";
 import { Notice, PageTitle, SectionTitle, Spinner, StatusBadge } from "@/components/ui";
 import { ApiError, errorMessage, getEvaluations, getMetrics, listWorkflows } from "@/lib/api";
@@ -56,7 +57,8 @@ export function AdminDashboard() {
 
 function Dashboard({ login }: { login: Login }) {
   const [status, setStatus] = useState<string>("");
-  const metrics = useLoad((signal) => getMetrics(signal), []);
+  const [metricsRound, setMetricsRound] = useState(0); // fetch the figures again after an ingestion
+  const metrics = useLoad((signal) => getMetrics(signal), [metricsRound]);
   const workflows = useLoad((signal) => listWorkflows({ status: status || undefined, limit: 25 }, signal), [status]);
   const evaluations = useLoad((signal) => getEvaluations(signal), []);
 
@@ -114,6 +116,11 @@ function Dashboard({ login }: { login: Login }) {
           </section>
         </>
       ) : null}
+
+      <section className="mt-12">
+        <SectionTitle title="Documents">Add rules or procedures for the agents to search and cite</SectionTitle>
+        <DocumentUpload login={login} onIngested={() => setMetricsRound((round) => round + 1)} />
+      </section>
 
       <section className="mt-12">
         <SectionTitle title="Evaluation" />

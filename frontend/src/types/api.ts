@@ -380,3 +380,29 @@ export type EvaluationRunView = {
 };
 
 export type EvaluationsResponse = { runs: EvaluationRunView[] };
+
+// --- Documents (POST /api/documents/upload, /api/documents/ingest) -------------
+
+export type DocumentCategory = "policy" | "sop" | "faq" | "supplier_terms" | "shop_profile" | "supplier_flyer";
+
+export type UploadResponse = {
+  document_id: string;
+  title: string;
+  category: DocumentCategory;
+  shop_id: string | null;
+  trust: "trusted" | "untrusted";
+  path: string;
+  size_bytes: number;
+  already_uploaded: boolean;
+  ingest_job_id: string | null;
+  notes: string[];
+};
+
+export type IngestJobResponse = {
+  job_id: string;
+  status: "running" | "done" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  summary: Record<string, unknown>;
+  error: string | null;
+};
