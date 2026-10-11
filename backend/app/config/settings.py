@@ -5,11 +5,12 @@ upper case (for example ``DATABASE_URL``). Values are read from, in order of
 priority: real environment variables, ``backend/.env``, then the repo-root ``.env``.
 """
 
+import re
 from datetime import date
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +38,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # --- Data stores -----------------------------------------------------
+    # Hosting providers' URLs work as given (postgres://... ?sslmode=require): see
+    # _async_driver below.
     database_url: str = "postgresql+asyncpg://orm_ai:orm_ai@localhost:5432/orm_ai"
     # Set true only when DATABASE_URL points at a transaction-mode pooler such as
     # Supabase's port 6543. It turns off prepared statements, which those poolers break.
@@ -100,6 +103,9 @@ class Settings(BaseSettings):
     auth_token_hours: int = 12
     # POST /api/auth/dev-token gives a token for any user ID. Never on in production.
     auth_dev_login: bool = True
+    # A public demo: these user IDs (comma-separated, never an admin) may log in with
+    # the demo login on any server, production included. Empty = no demo logins there.
+    auth_demo_users: str = ""
     rate_limit_enabled: bool = True
     rate_limit_agent: str = "20/minute"  # chat, agent run, approvals (per user or IP)
     rate_limit_upload: str = "10/hour"
@@ -126,6 +132,25 @@ class Settings(BaseSettings):
 
     # --- Health checks ---------------------------------------------------
     health_check_timeout_seconds: float = 2.0
+
+    @field_validator("database_url")
+    @classmethod
+    def _async_driver(cls, value: str) -> str:
+        """Render, Railway, Neon and Heroku hand out ``postgres://`` or ``postgresql://``
+        URLs with ``?sslmode=require``. The app talks to PostgreSQL through asyncpg, which
+        needs ``postgresql+asyncpg://`` and spells the SSL option ``ssl=``."""
+        url = value.strip()
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                url = "postgresql+asyncpg://" + url.removeprefix(prefix)
+                break
+        if url.startswith("postgresql+asyncpg://"):
+            url = re.sub(r"([?&])sslmode=", lambda match: f"{match.group(1)}ssl=", url)
+        return url
+
+    @property
+    def demo_user_list(self) -> list[str]:
+        return [user.strip().upper() for user in self.auth_demo_users.split(",") if user.strip()]
 
     @property
     def cors_origin_list(self) -> list[str]:

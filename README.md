@@ -2,7 +2,7 @@
 
 A multi-agent AI assistant that helps local shopkeepers keep their records organised and detailed.
 
-> **Status:** Phases 0–8 are done: the API foundations, database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, knowledge search (RAG) with citations, the multi-agent assistant behind `POST /api/chat` (LangGraph, with checkpoints and conversation memory), human approval (a policy gate, a pause until a person decides, an Action agent that runs only what was approved, input and output guardrails), the full API: logins, a live progress stream, rate limits, document uploads and read-back of every workflow ([docs/api.md](docs/api.md)), and the website: a chat that shows each agent at work, the sources it cited and an approval slip to approve, change or reject what it proposes, an approvals inbox, and an admin page with timings, errors and evaluation scores ([frontend/README.md](frontend/README.md)), and a 40-case evaluation in seven categories (normal, approval, ambiguous, missing information, tool failure, prompt injection, policy conflict) with a pinned model, scored on intent, records, citations, grounding, routing, escalation, tools and guardrails ([docs/agents.md](docs/agents.md#10-measure-it-the-40-case-evaluation-phases-4-5-and-8)). The models can be reached through OpenAI, Google Gemini (free tier), OpenRouter or a gateway such as [OmniRoute](docs/omniroute.md). Deployment (Phase 9) comes next. See [Roadmap](#roadmap).
+> **Status:** All nine phases are done: the API foundations, database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, knowledge search (RAG) with citations, the multi-agent assistant behind `POST /api/chat` (LangGraph, with checkpoints and conversation memory), human approval (a policy gate, a pause until a person decides, an Action agent that runs only what was approved, input and output guardrails), the full API: logins, a live progress stream, rate limits, document uploads and read-back of every workflow ([docs/api.md](docs/api.md)), and the website: a chat that shows each agent at work, the sources it cited and an approval slip to approve, change or reject what it proposes, an approvals inbox, and an admin page with timings, errors and evaluation scores ([frontend/README.md](frontend/README.md)), and a 40-case evaluation in seven categories (normal, approval, ambiguous, missing information, tool failure, prompt injection, policy conflict) with a pinned model, scored on intent, records, citations, grounding, routing, escalation, tools and guardrails ([docs/agents.md](docs/agents.md#10-measure-it-the-40-case-evaluation-phases-4-5-and-8)). The models can be reached through OpenAI, Google Gemini (free tier), OpenRouter or a gateway such as [OmniRoute](docs/omniroute.md). Phase 9 adds production images for the API and the website, a one-server Docker Compose setup, a public-demo login, a CI job that boots the production stack, and a deployment guide for one server or Render/Railway plus Vercel ([docs/deploy.md](docs/deploy.md)). See [Roadmap](#roadmap).
 >
 > **New here? Read [docs/how-it-works.md](docs/how-it-works.md) first.**
 
@@ -159,6 +159,8 @@ docker compose exec backend python -m scripts.seed
 
 **Using Supabase instead of Docker Postgres?** See [docs/supabase.md](docs/supabase.md).
 
+**Putting it online?** [docs/deploy.md](docs/deploy.md): one server with `docker-compose.prod.yml`, or the API on Render/Railway and the website on Vercel.
+
 ## Tests and checks
 
 ```powershell
@@ -241,11 +243,12 @@ Every response carries an `X-Request-ID` header, and every error uses one shape:
 | **6 API** | 9 | All endpoints, logins, SSE progress stream, rate limits, uploads, records and metrics ✅ |
 | **7 Frontend** | 10 | Login, chat with live stages, sources, approval slip, approvals inbox, admin page, request records ✅ |
 | **8 Evaluation** | 11 | 40 cases in seven categories, route, escalation, tool and guardrail scores, fault injection, pinned model, report, admin view ✅ |
-| 9 Deploy | 12 | Vercel + Render/Railway, full README, demo |
+| **9 Deploy** | 12 | Production images (API and website), one-server Compose, public-demo login, CI smoke test of the production stack, guide for Render/Railway + Vercel ✅ |
 
 ## Security notes
 
 - Secrets live only in `.env` (git-ignored). The frontend gets `NEXT_PUBLIC_API_URL` and nothing else. The browser keeps only its login token (in `localStorage`); replies are rendered from Markdown without raw HTML, so a reply cannot run code in the page.
+- In production the backend refuses to start without a strong `AUTH_SECRET`, `AUTH_REQUIRED=true` and an explicit `CORS_ORIGINS`. Development logins are off there; a public demo may open them for the accounts in `AUTH_DEMO_USERS`, never an admin ([docs/deploy.md](docs/deploy.md#a-public-demo)).
 - `.cursorignore` keeps `.env` files away from Cursor's AI features. Don't paste keys into an AI chat, and don't let an agent run commands that print `.env`.
 - Logs mask keys that look like passwords, tokens or API keys.
 - Health errors show only the exception type, never hosts or credentials.

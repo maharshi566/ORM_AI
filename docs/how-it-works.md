@@ -388,8 +388,11 @@ sequenceDiagram
 [frontend/README.md](../frontend/README.md) walks through the full refund example and every
 page.
 
-## 11. What comes next
+## 11. Putting it online
 
-| Phase | Builds on | Adds |
-| --- | --- | --- |
-| 9 Deploy | Docker, the production settings checks, `NEXT_PUBLIC_API_URL` | The backend on Render or Railway, the website on Vercel, a demo login for the public demo |
+[deploy.md](deploy.md) covers it: one server with `docker-compose.prod.yml` (PostgreSQL,
+Redis, the API and the website, behind an HTTPS proxy), or managed services (the API on
+Render or Railway, the website on Vercel, PostgreSQL and Redis from any provider). Both run
+the production rules: the backend refuses unsafe login and CORS settings, development
+logins are off unless a public demo lists its accounts, and the CI boots the production
+stack on every push to check it still starts.

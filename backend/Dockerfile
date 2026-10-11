@@ -24,6 +24,9 @@ COPY --chown=appuser:appuser scripts ./scripts
 COPY --chown=appuser:appuser migrations ./migrations
 COPY --chown=appuser:appuser alembic.ini ./
 COPY --chown=appuser:appuser knowledge_base ./knowledge_base
+# The 40 evaluation cases, so the gate can run against a deployment's own model
+# (docker compose exec backend python -m scripts.eval_agent); reports are written here.
+COPY --chown=appuser:appuser evaluation ./evaluation
 
 USER appuser
 EXPOSE 8000

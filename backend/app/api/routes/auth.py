@@ -11,6 +11,11 @@ click **Authorize** (top right) and paste it.
 ``GET /api/auth/dev-users`` lists the demo users the development login accepts (the
 frontend's login page shows them). It follows the same rule as the development login:
 local and test only.
+
+A **public demo** (Phase 9) may open the same login on any server for a short list of
+demo accounts: ``AUTH_DEMO_USERS=USR-001,USR-003``. Only those users can log in that
+way, and never an admin (an admin token reads and decides for every shop). Everyone
+else needs a token from the deployment's own login system.
 """
 
 from typing import Annotated
@@ -34,12 +39,27 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 DEV_LOGIN_ENVIRONMENTS = {"local", "test"}
 
 
-def _check_dev_login(settings: Settings) -> None:
-    if settings.app_env not in DEV_LOGIN_ENVIRONMENTS or not settings.auth_dev_login:
-        raise ForbiddenError(
-            "Development logins are switched off on this server (only APP_ENV=local or "
-            "test, with AUTH_DEV_LOGIN=true)."
-        )
+def _demo_only(settings: Settings) -> bool:
+    """False: any user may log in (development). True: only the demo accounts may.
+
+    Refuses when neither applies, the normal state of a shared server.
+    """
+    if settings.app_env in DEV_LOGIN_ENVIRONMENTS and settings.auth_dev_login:
+        return False
+    if settings.demo_user_list:
+        return True
+    raise ForbiddenError(
+        "Development logins are switched off on this server (only APP_ENV=local or "
+        "test, with AUTH_DEV_LOGIN=true; a public demo lists its accounts in "
+        "AUTH_DEMO_USERS)."
+    )
+
+
+def _check_demo_user(user: User, settings: Settings) -> None:
+    if user.id not in settings.demo_user_list:
+        raise ForbiddenError("Only the demo accounts can log in here.")
+    if str(user.role) == "admin":
+        raise ForbiddenError("An admin account cannot use the demo login.")
 
 
 async def _names(request: Request, user_id: str) -> tuple[User | None, str | None]:
@@ -57,10 +77,12 @@ async def dev_token(
     settings: Annotated[Settings, Depends(get_settings)],
     _: Annotated[None, Depends(login_rate_limit)],
 ) -> TokenResponse:
-    _check_dev_login(settings)
+    demo_only = _demo_only(settings)
     user, shop_name = await _names(request, body.user_id)
     if user is None or not user.is_active:
         raise NotFoundError(f"No active user {body.user_id}.")
+    if demo_only:
+        _check_demo_user(user, settings)
     principal = Principal(user_id=user.id, shop_id=user.shop_id, role=str(user.role))  # type: ignore[arg-type]
     return TokenResponse(
         access_token=create_token(principal, settings),
@@ -83,16 +105,17 @@ async def dev_users(
     settings: Annotated[Settings, Depends(get_settings)],
     _: Annotated[None, Depends(login_rate_limit)],
 ) -> list[DevUserView]:
-    _check_dev_login(settings)
+    demo_only = _demo_only(settings)
+    query = (
+        select(User, Shop.name)
+        .join(Shop, Shop.id == User.shop_id, isouter=True)
+        .where(User.is_active.is_(True))
+        .order_by(User.shop_id.is_(None), User.shop_id, User.id)
+    )
+    if demo_only:
+        query = query.where(User.id.in_(settings.demo_user_list), User.role != "admin")
     async with session_factory_for(request)() as db:
-        rows = (
-            await db.execute(
-                select(User, Shop.name)
-                .join(Shop, Shop.id == User.shop_id, isouter=True)
-                .where(User.is_active.is_(True))
-                .order_by(User.shop_id.is_(None), User.shop_id, User.id)
-            )
-        ).all()
+        rows = (await db.execute(query)).all()
     return [
         DevUserView(
             user_id=user.id,

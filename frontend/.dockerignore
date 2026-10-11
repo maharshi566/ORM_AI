@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+# Local settings never go into an image; NEXT_PUBLIC_API_URL is a build argument.
+.env*
+Dockerfile
+.dockerignore

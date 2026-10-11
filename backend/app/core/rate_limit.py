@@ -37,8 +37,10 @@ def _storage(settings: Settings) -> Storage:
     uri = settings.rate_limit_storage.strip()
     if not uri or uri == "memory":
         return MemoryStorage()
-    if uri.startswith("redis://") or uri.startswith("rediss://"):
-        uri = f"async+{uri}"
+    if uri.startswith(("redis://", "rediss://")):
+        # Through redis-py (installed for the health check); limits would otherwise want
+        # the separate coredis package, and every rate-limited request would fail.
+        return storage_from_string(f"async+{uri}", implementation="redispy")  # type: ignore[return-value]
     return storage_from_string(uri)  # type: ignore[return-value]
 
 

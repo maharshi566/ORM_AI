@@ -31,7 +31,9 @@ There are two modes, set in `.env`:
 **Getting a token on your own computer.** `POST /api/auth/dev-token` gives a token for any
 demo user. It works only when `APP_ENV` is `local` or `test` and `AUTH_DEV_LOGIN=true`.
 On any shared server it is refused, because it would let anyone log in as anyone. A real
-deployment issues tokens from its own login system, signed with `AUTH_SECRET`.
+deployment issues tokens from its own login system, signed with `AUTH_SECRET`. A public demo
+may open it for a few demo accounts with `AUTH_DEMO_USERS=USR-001,USR-003` (never an admin;
+`GET /api/auth/dev-users` then lists only those); see [deploy.md](deploy.md#a-public-demo).
 
 Demo users (from the synthetic data):
 

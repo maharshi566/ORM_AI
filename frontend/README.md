@@ -143,7 +143,10 @@ src/
 ```
 
 All pages are client components: they need the login, which lives in the browser. The
-server only sends the static shell, so the site can be hosted anywhere (Vercel in Phase 9).
+server only sends the static shell, so the site can be hosted anywhere: on Vercel (root
+directory `frontend`, `NEXT_PUBLIC_API_URL` set), or as the Docker image from `Dockerfile`, a small
+Node server built with Next.js's standalone output (`docker build --build-arg
+NEXT_PUBLIC_API_URL=https://api.example.com .`). See [docs/deploy.md](../docs/deploy.md).
 
 ## The look
 

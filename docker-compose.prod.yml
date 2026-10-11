@@ -1,0 +1,97 @@
+# ORM_AI in production on one server: database, Redis, API and website.
+#
+#   cp .env.prod.example .env.prod      # then fill in the REQUIRED values
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod exec backend python -m scripts.seed
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod exec backend python -m scripts.ingest
+#
+# Differences from docker-compose.yml (the local development stack):
+# - APP_ENV=production and AUTH_REQUIRED=true are fixed here, so the backend refuses to
+#   start without a strong AUTH_SECRET and an explicit CORS_ORIGINS (app/config/settings.py).
+# - Compose refuses to start at all when a required value is missing (the ":?" below).
+# - PostgreSQL and Redis are not published; the API and the website are published on
+#   127.0.0.1 only, for an HTTPS reverse proxy in front (docs/deploy.md has a Caddyfile).
+# - Rate-limit counts live in Redis, so they survive a restart and are shared.
+# - Uploads, the knowledge index, the database and Redis keep their data in volumes.
+
+name: orm_ai_prod
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orm_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-orm_ai}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    image: orm-ai-backend
+    env_file:
+      - path: .env.prod
+        required: false # CI passes the values as environment variables instead
+    environment:
+      APP_ENV: production
+      AUTH_REQUIRED: "true"
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET (32+ random characters) in .env.prod}
+      CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS (the website's address) in .env.prod}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-orm_ai}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-orm_ai}
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_STORAGE: redis://redis:6379/1
+      CHROMA_PERSIST_DIR: /app/data/chroma
+      UPLOAD_DIR: /app/data/uploads
+      LOG_JSON: "true"
+      AUTH_DEMO_USERS: ${AUTH_DEMO_USERS:-}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - chroma_data:/app/data/chroma
+      - uploads_data:/app/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # Chats still streaming get up to 30 s to finish on "docker compose stop" (app/main.py).
+    stop_grace_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?Set PUBLIC_API_URL (the API's public address) in .env.prod}
+    image: orm-ai-frontend
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  chroma_data:
+  uploads_data:

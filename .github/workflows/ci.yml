@@ -66,3 +66,36 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  production-stack:
+    name: Production stack (Docker images + smoke test)
+    runs-on: ubuntu-latest
+    # Throwaway values: the stack only lives for this job.
+    env:
+      AUTH_SECRET: ci-smoke-test-secret-0123456789-abcdefghijklmnopqrstuvwxyz
+      POSTGRES_PASSWORD: ci-smoke-test-password
+      CORS_ORIGINS: http://localhost:3000
+      PUBLIC_API_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build both images and start the stack
+        run: docker compose -f docker-compose.prod.yml up -d --build --wait --wait-timeout 300
+      - name: Smoke test
+        run: |
+          set -eu
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          curl -fsS http://localhost:8000/api/health
+          curl -fsS http://localhost:3000/ | grep -q "ORM_AI"
+          # Production rules hold: no development logins, records need a login.
+          test "$(code -X POST http://localhost:8000/api/auth/dev-token \
+            -H 'Content-Type: application/json' -d '{"user_id":"USR-001"}')" = 403
+          test "$(code http://localhost:8000/api/workflows)" = 401
+          # The evaluation set ships with the image.
+          docker compose -f docker-compose.prod.yml exec -T backend \
+            test -f evaluation/datasets/agent_cases.yaml
+      - name: Logs
+        if: failure()
+        run: docker compose -f docker-compose.prod.yml logs --tail 200
+      - name: Stop
+        if: always()
+        run: docker compose -f docker-compose.prod.yml down -v
