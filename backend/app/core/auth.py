@@ -179,6 +179,22 @@ async def current_user(
     return principal
 
 
+async def optional_user(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> Principal | None:
+    """Like ``current_user``, but a missing token is never refused here: for endpoints
+    that also accept another proof, such as a scheduler's secret. A token sent is still
+    checked."""
+    token = credentials.credentials.strip() if credentials else ""
+    if not token:
+        return None
+    principal = await _still_valid(request, decode_token(token, settings))
+    request.state.user_id = principal.user_id
+    return principal
+
+
 def check_shop(principal: Principal | None, shop_id: str) -> None:
     """A logged-in user may only reach their own shop (admins reach every shop)."""
     from app.core.exceptions import ForbiddenError
@@ -190,3 +206,4 @@ def check_shop(principal: Principal | None, shop_id: str) -> None:
 
 
 CurrentUser = Annotated[Principal | None, Depends(current_user)]
+OptionalUser = Annotated[Principal | None, Depends(optional_user)]

@@ -122,6 +122,8 @@ All paths start with `/api`. "Login" says what a token is needed for when
 | GET | `/users` | The team: your shop's users (owner), or everyone (admin) | yes (owner) | – |
 | POST | `/users` | Add a user (owners add staff to their own shop) | yes (owner) | – |
 | PATCH | `/users/{user_id}` | Switch a user off or on, or set a new password | yes (owner) | – |
+| GET | `/briefings/today?shop_id=` | Today's morning briefing for a shop ([briefing.md](briefing.md)) | yes | – |
+| POST | `/briefings/run` | Build every shop's briefing and send it on WhatsApp (scheduler secret or admin) | secret or admin | – |
 | GET, POST | `/webhooks/whatsapp` | WhatsApp delivery receipts, signed by Meta ([whatsapp.md](whatsapp.md)) | signature | – |
 
 **Which shop can I see?** A logged-in owner or staff member sees only their own shop:

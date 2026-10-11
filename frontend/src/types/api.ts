@@ -443,3 +443,30 @@ export type IngestJobResponse = {
   summary: Record<string, unknown>;
   error: string | null;
 };
+
+// ------------------------------------------------------------------ morning briefing
+
+export type BriefingContent = {
+  shop_name: string;
+  owner_name: string;
+  low_stock: { product_id: string; name: string; stock_qty: number; reorder_level: number; on_order: boolean }[];
+  low_stock_count: number;
+  low_stock_not_ordered: number;
+  overdue: { customer_id: string; name: string; balance: string; days_past_due: number }[];
+  overdue_count: number;
+  overdue_total: string;
+  late_orders: { purchase_order_id: string; supplier_name: string; days_late: number }[];
+  approvals_waiting: number;
+  yesterday_bills: number;
+  yesterday_sales: string;
+};
+
+/** Today's morning briefing for a shop (GET /api/briefings/today). */
+export type BriefingView = {
+  shop_id: string;
+  briefing_date: string;
+  text: string;
+  content: BriefingContent;
+  sent_at: string | null;
+  sent_to: string | null;
+};

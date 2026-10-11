@@ -6,6 +6,7 @@ from app.api.routes import (
     agent,
     approval,
     auth,
+    briefings,
     chat,
     documents,
     health,
@@ -26,3 +27,4 @@ api_router.include_router(documents.router)  # Phase 6: upload, ingest, ingest/{
 api_router.include_router(records.router)  # Phase 6-7: sessions, workflows, metrics, lists
 api_router.include_router(users.router)  # The team: GET/POST /users, PATCH /users/{id}
 api_router.include_router(webhooks.router)  # WhatsApp delivery receipts
+api_router.include_router(briefings.router)  # The morning briefing: today, run

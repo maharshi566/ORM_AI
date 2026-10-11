@@ -4,7 +4,7 @@ What the agents themselves return (TriageResult, InvestigationResult, FinalRespo
 is in app/agents/schemas.py; these are the shapes the API sends and receives.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -549,3 +549,21 @@ class EvaluationRunView(BaseModel):
 
 class EvaluationsResponse(BaseModel):
     runs: list[EvaluationRunView]
+
+
+class BriefingView(BaseModel):
+    """Today's morning briefing for one shop (docs/briefing.md)."""
+
+    shop_id: str
+    briefing_date: date
+    text: str
+    content: dict[str, Any] = Field(description="The counts and the items named in the text")
+    sent_at: datetime | None = Field(description="When it went to the owner on WhatsApp")
+    sent_to: str | None
+
+
+class BriefingRunResponse(BaseModel):
+    built: int
+    sent: int
+    not_sent: int = Field(description="Built, but not for WhatsApp (no real owner number)")
+    failed: list[str]

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApprovalSlip } from "@/components/ApprovalSlip";
+import { BriefingCard } from "@/components/chat/BriefingCard";
 import { RequestPanel } from "@/components/chat/RequestPanel";
 import { Markdown } from "@/components/Markdown";
 import { RequireLogin } from "@/components/RequireLogin";
@@ -260,7 +261,7 @@ function Workspace({ login }: { login: Login }) {
             </div>
           ) : null}
           {!loading && !loadError && turns.length === 0 ? (
-            <EmptyState suggestions={suggestions} onPick={ask} disabled={sending} />
+            <EmptyState shop={shop} suggestions={suggestions} onPick={ask} disabled={sending} />
           ) : null}
           <ol className="space-y-8">
             {turns.map((turn, index) => (
@@ -339,9 +340,20 @@ function ConversationList({
   );
 }
 
-function EmptyState({ suggestions, onPick, disabled }: { suggestions: string[]; onPick: (text: string) => void; disabled: boolean }) {
+function EmptyState({
+  shop,
+  suggestions,
+  onPick,
+  disabled,
+}: {
+  shop: string;
+  suggestions: string[];
+  onPick: (text: string) => void;
+  disabled: boolean;
+}) {
   return (
     <div className="pl-[2.6rem] pr-4 sm:pl-[4.5rem] sm:pr-5">
+      <BriefingCard shopId={shop} onAsk={onPick} disabled={disabled} />
       <h1 className="font-serif text-xl font-extrabold">What do you want to know about the shop?</h1>
       <p className="mt-2 max-w-[60ch] text-ink-2">
         Ask about stock, sales, supplier orders or customer credit. The agents look up your records and the shop&apos;s

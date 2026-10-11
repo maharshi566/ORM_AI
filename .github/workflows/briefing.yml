@@ -1,0 +1,36 @@
+# The morning briefing (docs/briefing.md): every day at 7:30 IST, ask the deployed
+# backend to build each shop's briefing and send it to the owners on WhatsApp.
+#
+# Needs two repository secrets (Settings > Secrets and variables > Actions):
+#   BRIEFING_URL          the backend's public address, e.g. https://orm-ai-api.onrender.com
+#   BRIEFING_CRON_SECRET  the same value as BRIEFING_CRON_SECRET on the backend
+# Without them the job says so and does nothing. "Run workflow" runs it by hand.
+
+name: Morning briefing
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC = 07:30 IST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Build and send the briefings
+        env:
+          BRIEFING_URL: ${{ secrets.BRIEFING_URL }}
+          BRIEFING_CRON_SECRET: ${{ secrets.BRIEFING_CRON_SECRET }}
+        run: |
+          if [ -z "$BRIEFING_URL" ] || [ -z "$BRIEFING_CRON_SECRET" ]; then
+            echo "::notice::BRIEFING_URL and BRIEFING_CRON_SECRET are not set; nothing to do."
+            exit 0
+          fi
+          # A free Render service sleeps when idle: the first call may take a minute.
+          curl --fail-with-body --silent --show-error --retry 3 --retry-delay 20 \
+            --max-time 300 -X POST "${BRIEFING_URL%/}/api/briefings/run" \
+            -H "X-Cron-Secret: $BRIEFING_CRON_SECRET"

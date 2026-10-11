@@ -10,6 +10,7 @@ import type {
   ApprovalDecisionRequest,
   ApprovalListResponse,
   ApprovalStatusResponse,
+  BriefingView,
   ChatResponse,
   CodeRequestResponse,
   DevUser,
@@ -184,6 +185,12 @@ export async function changePassword(currentPassword: string, newPassword: strin
       new_password: newPassword,
     }),
   );
+}
+
+// ------------------------------------------------------------------ morning briefing
+
+export function getBriefing(shopId: string, signal?: AbortSignal): Promise<BriefingView> {
+  return getJson<BriefingView>(`/api/briefings/today${query({ shop_id: shopId })}`, signal);
 }
 
 // ------------------------------------------------------------------ the team

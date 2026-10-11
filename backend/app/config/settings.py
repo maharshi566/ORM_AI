@@ -147,6 +147,15 @@ class Settings(BaseSettings):
     whatsapp_template_login_code: str = "login_code"
     whatsapp_template_daily_briefing: str = "daily_briefing"
 
+    # --- Morning briefing (docs/briefing.md) ---------------------------------
+    # POST /api/briefings/run builds every shop's briefing and, with WhatsApp set up,
+    # sends it to the owner. A scheduler (the GitHub Actions workflow, or cron) calls it
+    # with this secret in the X-Cron-Secret header.
+    briefing_cron_secret: SecretStr | None = None
+    # Only these shops get the briefing on WhatsApp (comma-separated). Empty: every shop
+    # whose owner has a real phone number (the synthetic owners' numbers are made up).
+    briefing_shops: str = ""
+
     # --- Mock external APIs (Phase 2) -------------------------------------
     # none, timeout, server_error, not_found, rate_limited, or random (fails 20% of calls)
     mock_api_failure_mode: str = "none"
@@ -174,6 +183,10 @@ class Settings(BaseSettings):
     @property
     def demo_user_list(self) -> list[str]:
         return [user.strip().upper() for user in self.auth_demo_users.split(",") if user.strip()]
+
+    @property
+    def briefing_shop_list(self) -> list[str]:
+        return [shop.strip().upper() for shop in self.briefing_shops.split(",") if shop.strip()]
 
     @property
     def cors_origin_list(self) -> list[str]:

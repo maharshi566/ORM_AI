@@ -64,6 +64,25 @@ class User(Base):
     token_version: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class Briefing(Base):
+    """A shop's morning briefing, one per shop and day (app/services/briefing_service.py)."""
+
+    __tablename__ = "briefings"
+    __table_args__ = (UniqueConstraint("shop_id", "briefing_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    shop_id: Mapped[str] = mapped_column(ForeignKey("shops.id"), index=True)
+    briefing_date: Mapped[date] = mapped_column(Date)
+    content: Mapped[dict[str, Any]] = mapped_column(JSONType)
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = _now_column()
+    # WhatsApp to the owner, when sent: when, to whom (masked), Meta's ID, or why not.
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sent_to: Mapped[str | None] = mapped_column(String(20))
+    message_id: Mapped[str | None] = mapped_column(String(128))
+    send_error: Mapped[str | None] = mapped_column(Text)
+
+
 class LoginCode(Base):
     """A one-time login code sent to a user's phone. Only a keyed hash is stored."""
 
