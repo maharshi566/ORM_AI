@@ -19,6 +19,10 @@ const SCORE_LABEL: Record<string, string> = {
   grounded: "Reply passed the check",
   approval: "Paused for the right person",
   no_false_claims: "No false claims of action",
+  route: "Took the right path (answer, ask back, or wait)",
+  escalation: "Asked the right person",
+  tools: "Used the right tools, and reported failures",
+  guardrail: "Caught the rule-bending message",
 };
 const SCORE_SHORT: Record<string, string> = {
   intent: "Intent",
@@ -27,6 +31,20 @@ const SCORE_SHORT: Record<string, string> = {
   grounded: "Checked",
   approval: "Approval",
   no_false_claims: "Honest",
+  route: "Path",
+  escalation: "Asked",
+  tools: "Tools",
+  guardrail: "Guard",
+};
+// The evaluation set's categories, in the order the report lists them.
+const CATEGORY_LABEL: Record<string, string> = {
+  normal: "Normal questions",
+  approval: "Approvals",
+  ambiguous: "Ambiguous",
+  missing_information: "Missing details",
+  tool_failure: "Tool failures",
+  prompt_injection: "Prompt injection",
+  policy_conflict: "Policy conflicts",
 };
 const STATUSES = ["", "completed", "awaiting_approval", "failed", "blocked", "running"] as const;
 // Agents in the order a request meets them.
@@ -288,6 +306,32 @@ function ToolTable({ metrics }: { metrics: MetricsResponse }) {
   );
 }
 
+/** Cases passed per category: which kind of request is weak shows at a glance. */
+function CategoryTable({ results }: { results: EvaluationRunView["results"] }) {
+  const order = Object.keys(CATEGORY_LABEL);
+  const groups = new Map<string, { total: number; passed: number }>();
+  for (const result of results) {
+    const group = groups.get(result.category) ?? { total: 0, passed: 0 };
+    group.total += 1;
+    group.passed += result.passed ? 1 : 0;
+    groups.set(result.category, group);
+  }
+  const rank = (category: string) => (order.includes(category) ? order.indexOf(category) : order.length);
+  const rows = [...groups.entries()].sort(([a], [b]) => rank(a) - rank(b));
+  return (
+    <dl className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-rule bg-rule sm:grid-cols-4 lg:grid-cols-7">
+      {rows.map(([category, { total, passed }]) => (
+        <div key={category} className="bg-sheet px-3 py-2.5">
+          <dt className="text-xs text-ink-2">{CATEGORY_LABEL[category] ?? category.replace(/_/g, " ")}</dt>
+          <dd className={`font-serif text-lg font-bold tabular-nums ${passed === total ? "text-stamp" : "text-amber"}`}>
+            {passed}/{total}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function Evaluation({ runs }: { runs: EvaluationRunView[] }) {
   const [index, setIndex] = useState(0);
   const run = runs[index];
@@ -340,6 +384,8 @@ function Evaluation({ runs }: { runs: EvaluationRunView[] }) {
         </ul>
         <p className="mt-3 text-xs text-ink-3">The dark tick on each bar is the {percent(GATE)} gate.</p>
       </div>
+
+      <CategoryTable results={run.results} />
 
       <div className="mt-4 overflow-x-auto rounded-lg border border-rule bg-sheet">
         <table className="w-full min-w-[48rem] text-left text-sm">

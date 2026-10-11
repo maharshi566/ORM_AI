@@ -9,7 +9,7 @@ from datetime import date
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     llm_structured_output: Literal["auto", "json_schema", "json_object"] = "auto"
     # For reasoning models only (e.g. low): sent as reasoning_effort. Empty = not sent.
     llm_reasoning_effort: str = ""
+    # Sampling temperature. Unset = the provider's default. 0 makes evaluation runs
+    # repeatable (scripts/eval_agent --temperature 0); reasoning models reject it.
+    llm_temperature: float | None = Field(default=None, ge=0, le=2)
 
     # --- Optional gateway (OmniRoute, LiteLLM, Ollama, ...) ----------------
     # Any server that speaks the OpenAI API. Empty LLM_BASE_URL = OpenAI itself.

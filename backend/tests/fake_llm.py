@@ -15,7 +15,16 @@ checkpointer and the validator. Switches make it misbehave on purpose:
 * ``obey_injection``: replies do what the supplier flyer's hidden notice says;
 * ``judge_unsupported``: the first N groundedness checks find an unsupported claim;
 * ``bad_arguments``: the first N investigations write a supplier follow-up with an
-  argument value the tool does not accept (``issue: "delayed"``).
+  argument value the tool does not accept (``issue: "delayed"``);
+* ``ignore_reminder_gap``: proposes a payment reminder even when one went out in the
+  last 7 days, so the tests can check that the tool still refuses it when approved.
+
+Phase 8 behaviour, as a careful model would: it asks which customer, bill, product or
+order is meant when the message only points at it ("is it in stock?") or asks for an
+action without naming it, and asks for the new price when a price change has none; it
+checks open purchase orders before answering a reorder question; it leaves a reminder
+unproposed when the record shows one in the last 7 days; and it cites the documents the
+request names first.
 
 Actions it proposes (Phase 5), from the words of the request: a supplier follow-up for
 a late or short order, a payment reminder, a price change ("... to Rs 355"), a stock
@@ -46,6 +55,7 @@ USAGE = LLMUsage(model="fake-model", input_tokens=100, output_tokens=20, latency
 RULES: list[tuple[tuple[str, ...], str]] = [
     (("return", "refund"), "returns"),
     (("reminder", "remind"), "payment_reminder"),
+    (("margin", "supplier's price", "supplier's latest price"), "pricing"),
     (("arrived", "delivery", "not arrived", "supplier", "purchase order"), "supplier_issue"),
     (("counted", "fewer", "less than the system", "count", "damaged"), "stock_discrepancy"),
     (("margin", "priced", "price"), "pricing"),
@@ -55,8 +65,65 @@ RULES: list[tuple[tuple[str, ...], str]] = [
     (("running low", "reorder", "low on"), "reorder"),
     (("stock", "in stock"), "stock_status"),
     (("policy", "rule"), "policy_question"),
+    (("flyer", "festival offer"), "general_help"),
     (("hello", "what can you do", "help me"), "general_help"),
 ]
+
+# Phase 8: what each intent needs named before anything can be looked up, and the
+# question to ask when it is not. A careful model asks when the message only points at
+# the thing ("it", "he", "that order") or asks for an action without naming it.
+NEEDS: dict[str, tuple[str, str, str]] = {
+    "payment_reminder": ("customer_ids", "which customer", "Which customer should I remind?"),
+    "customer_credit": ("customer_ids", "which customer", "Which customer do you mean?"),
+    "returns": ("sale_ids", "which bill", "Which bill (sale ID) is it?"),
+    "pricing": ("product_ids", "which product", "Which product do you mean?"),
+    "stock_discrepancy": ("product_ids", "which product", "Which product, and how many units?"),
+    "supplier_issue": ("purchase_order_ids", "which order", "Which purchase order do you mean?"),
+    "stock_status": ("product_ids", "which product", "Which product do you mean?"),
+}
+POINTING = re.compile(r"\b(?:it|he|she|they|him|her|them|that|this one|that one)\b", re.IGNORECASE)
+PRICE_CHANGE = re.compile(r"\b(?:change|set|update)\b[^.]*\bprice\b", re.IGNORECASE)
+AMOUNT = re.compile(r"\brs\.?\s*\d", re.IGNORECASE)
+REMINDER_GAP_DAYS = 7  # POL-REMINDER-001: at most one reminder every 7 days
+
+
+def _clarification(
+    request: str, intent: str, entities: Any, wants_action: bool
+) -> tuple[str, str] | None:
+    """(what is missing, the question to ask) before the request can be handled."""
+    need = NEEDS.get(intent)
+    # Reminders always need a customer (the Phase 4 behaviour); the rest only when the
+    # message points at something or asks for an action.
+    asks = intent == "payment_reminder" or wants_action or POINTING.search(request)
+    if need and not getattr(entities, need[0]) and asks:
+        return need[1], need[2]
+    if intent == "pricing" and PRICE_CHANGE.search(request) and not AMOUNT.search(request):
+        return "the new price", "What should the new selling price be?"
+    return None
+
+
+def _relevant_first(citations: list[str], request: str) -> list[str]:
+    """Citations from a document the request names first, as a careful model picks
+    sources ("summarise the flyer" cites EXT-FLYER-001, a credit question the credit
+    policy); otherwise the search order is kept."""
+    asked = set(re.findall(r"[a-z]{4,}", request.lower()))
+
+    def named(citation: str) -> bool:
+        document_id = citation.strip("[]").split(" v")[0]
+        return bool(asked & set(re.findall(r"[a-z]{4,}", document_id.lower())))
+
+    return sorted(citations, key=lambda citation: not named(citation))
+
+
+def _recent_reminder(task: str, customer_id: str, today: date) -> bool:
+    """The customer's record shows a reminder within the last 7 days."""
+    record = re.search(
+        rf'customer_id={re.escape(customer_id)}\)">\s*(.*?)</record>', task, re.DOTALL
+    )
+    sent = re.search(r'"last_reminder_at":"(\d{4}-\d{2}-\d{2})', record.group(1) if record else "")
+    return bool(sent) and (today - date.fromisoformat(sent.group(1))).days < REMINDER_GAP_DAYS
+
+
 ROUTES = {
     "stock_status": ["data"],
     "reorder": ["data", "knowledge"],
@@ -190,6 +257,7 @@ class RuleBasedLLM:
         obey_injection: bool = False,
         judge_unsupported: int = 0,
         bad_arguments: int = 0,
+        ignore_reminder_gap: bool = False,
     ) -> None:
         self.fail = set(fail)
         self.more_data = more_data
@@ -200,6 +268,7 @@ class RuleBasedLLM:
         self.obey_injection = obey_injection
         self.judge_unsupported = judge_unsupported
         self.bad_arguments = bad_arguments
+        self.ignore_reminder_gap = ignore_reminder_gap
         self.repair_requests: list[str] = []
         self.calls: list[str] = []
 
@@ -255,18 +324,20 @@ class RuleBasedLLM:
             "supplier_ids",
         ):
             setattr(entities, kind, ids_of_kind(request, kind))
-        unclear = intent == "payment_reminder" and not entities.customer_ids
+        wants_action = intent in {"payment_reminder"} or any(
+            w in request.lower() for w in ACTION_WORDS
+        )
+        unclear = _clarification(request, intent, entities, wants_action)
         return TriageResult(
             intent=intent,
             category=CATEGORIES.get(intent, "general"),
             priority="normal",
             summary=request,
             entities=entities,
-            missing_information=["which customer"] if unclear else [],
-            needs_clarification=unclear,
-            clarifying_question="Which customer should I remind?" if unclear else None,
-            wants_action=intent in {"payment_reminder"}
-            or any(w in request.lower() for w in ACTION_WORDS),
+            missing_information=[unclear[0]] if unclear else [],
+            needs_clarification=unclear is not None,
+            clarifying_question=unclear[1] if unclear else None,
+            wants_action=wants_action,
             recommended_route=ROUTES.get(intent, ["data", "knowledge"]),
             confidence=0.9,
         )
@@ -310,7 +381,12 @@ class RuleBasedLLM:
                     "reason": "POL-SUPPLIER-001 says to message the supplier.",
                 }
             )
-        if intent == "payment_reminder" and customers:
+        recent = (
+            bool(customers)
+            and not self.ignore_reminder_gap
+            and _recent_reminder(task, customers[0], _today(task))
+        )
+        if intent == "payment_reminder" and customers and not recent:
             actions.append(
                 {
                     "tool": "send_payment_reminder",
@@ -339,7 +415,7 @@ class RuleBasedLLM:
 
     def _response(self, task: str) -> FinalResponse:
         request = _line(task, "Request: ")
-        citations = list(dict.fromkeys(CITATION.findall(task)))[:2]
+        citations = _relevant_first(list(dict.fromkeys(CITATION.findall(task))), request)[:2]
         sources = re.findall(r'<record source="([^"]+)"', task)
         waiting = task.split("Waiting for approval (NOT done):", 1)
         pending = (
@@ -414,7 +490,8 @@ class RuleBasedLLM:
             calls.append(("get_customer_account", {"customer_id": customer_id}))
         for sale_id in ids_of_kind(request, "sale_ids"):
             calls.append(("get_sale", {"sale_id": sale_id}))
-        if ids_of_kind(request, "purchase_order_ids") or intent == "supplier_issue":
+        # Before any reorder, check for an open order (POL-REORDER-001 §2).
+        if ids_of_kind(request, "purchase_order_ids") or intent in {"supplier_issue", "reorder"}:
             calls.append(("get_purchase_orders", {}))
         if intent in {"reorder", "stock_status"} and not products:
             calls.append(("get_low_stock_products", {}))

@@ -142,8 +142,8 @@ something to work with, and let the tests prove that one shop never sees another
 shop's records.
 
 The generator is **deterministic**. The same seed always produces the same
-fingerprint, which the tests check, so evaluation answers in Phase 8 can be
-exact.
+fingerprint, which the tests check, so the evaluation cases (Phase 8) can name exact
+records.
 
 ### The knowledge base
 
@@ -214,8 +214,8 @@ data only ever comes from the tool.
 A real shop would connect to a supplier's ordering system and a WhatsApp/SMS
 gateway. `tools/api_tools.py` simulates both. Setting `MOCK_API_FAILURE_MODE` in
 `.env` makes them fail on purpose, with `timeout`, `server_error`, `rate_limited`,
-`not_found` or `random`. This drives the tool-failure tests now and the
-tool-failure evaluation cases in Phase 8.
+`not_found` or `random`. This drives the tool-failure tests, and the evaluation's
+tool-failure cases set it per case (a `fault:` in the case file).
 
 ## 5. Knowledge search (Phase 3)
 
@@ -257,7 +257,7 @@ python -m scripts.seed          # load the 50 synthetic shops
 python -m scripts.ingest        # embed the knowledge base (needs an AI key or gateway)
 python -m scripts.eval_retrieval  # retrieval quality: hit@5 must be at least 0.8
 python -m scripts.check_llm     # can the chosen models chat, follow a schema, call tools?
-python -m scripts.eval_agent    # the agents on 10 cases (needs a model; a few cents)
+python -m scripts.eval_agent --temperature 0 --pause 30   # the 40 cases (needs a model)
 pytest                          # the whole test suite, no API key needed
 uvicorn app.main:app --reload   # then open http://localhost:8000/docs
 ```
@@ -392,5 +392,4 @@ page.
 
 | Phase | Builds on | Adds |
 | --- | --- | --- |
-| 8 Evaluation | the 15-case evaluation, the `evaluations` table and the admin page | 40 cases (normal, ambiguous, missing information, tool failure, prompt injection, policy conflict, human approval), more scores, one pinned model, a report |
 | 9 Deploy | Docker, the production settings checks, `NEXT_PUBLIC_API_URL` | The backend on Render or Railway, the website on Vercel, a demo login for the public demo |

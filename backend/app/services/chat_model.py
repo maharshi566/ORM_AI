@@ -302,6 +302,8 @@ class OpenAIChatModel:
         self._extra: dict[str, Any] = {}
         if settings.llm_reasoning_effort.strip():
             self._extra["reasoning_effort"] = settings.llm_reasoning_effort.strip()
+        if settings.llm_temperature is not None:
+            self._extra["temperature"] = settings.llm_temperature
         self._json_object_only: set[str] = set()  # models that refused strict schemas
         if client is None:
             client = make_client(

@@ -2,7 +2,7 @@
 
 A multi-agent AI assistant that helps local shopkeepers keep their records organised and detailed.
 
-> **Status:** Phases 0–7 are done: the API foundations, database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, knowledge search (RAG) with citations, the multi-agent assistant behind `POST /api/chat` (LangGraph, with checkpoints and conversation memory), human approval (a policy gate, a pause until a person decides, an Action agent that runs only what was approved, input and output guardrails, a 15-case evaluation), the full API: logins, a live progress stream, rate limits, document uploads and read-back of every workflow ([docs/api.md](docs/api.md)), and the website: a chat that shows each agent at work, the sources it cited and an approval slip to approve, change or reject what it proposes, an approvals inbox, and an admin page with timings, errors and evaluation scores ([frontend/README.md](frontend/README.md)). The models can be reached through OpenAI, Google Gemini (free tier), OpenRouter or a gateway such as [OmniRoute](docs/omniroute.md). The 40-case evaluation (Phase 8) comes next. See [Roadmap](#roadmap).
+> **Status:** Phases 0–8 are done: the API foundations, database tables with migrations, 91 days of synthetic data for 50 shops with 17 planted edge cases, 78 knowledge-base documents, 21 typed tools with approvals, idempotency and failure injection, knowledge search (RAG) with citations, the multi-agent assistant behind `POST /api/chat` (LangGraph, with checkpoints and conversation memory), human approval (a policy gate, a pause until a person decides, an Action agent that runs only what was approved, input and output guardrails), the full API: logins, a live progress stream, rate limits, document uploads and read-back of every workflow ([docs/api.md](docs/api.md)), and the website: a chat that shows each agent at work, the sources it cited and an approval slip to approve, change or reject what it proposes, an approvals inbox, and an admin page with timings, errors and evaluation scores ([frontend/README.md](frontend/README.md)), and a 40-case evaluation in seven categories (normal, approval, ambiguous, missing information, tool failure, prompt injection, policy conflict) with a pinned model, scored on intent, records, citations, grounding, routing, escalation, tools and guardrails ([docs/agents.md](docs/agents.md#10-measure-it-the-40-case-evaluation-phases-4-5-and-8)). The models can be reached through OpenAI, Google Gemini (free tier), OpenRouter or a gateway such as [OmniRoute](docs/omniroute.md). Deployment (Phase 9) comes next. See [Roadmap](#roadmap).
 >
 > **New here? Read [docs/how-it-works.md](docs/how-it-works.md) first.**
 
@@ -73,7 +73,7 @@ ORM_AI/
 │   ├── scripts/               seed, ingest, eval_retrieval, eval_agent, check_llm, draw_graph, ...
 │   ├── data/seed/             EDGE_CASES.md and a CSV export of every table
 │   ├── knowledge_base/        78 documents: policies, procedures, supplier terms, FAQs, 50 shop profiles
-│   ├── evaluation/            test sets (retrieval, 15 agent cases; 40 in Phase 8) and reports
+│   ├── evaluation/            test sets (retrieval questions, 40 agent cases) and reports
 │   ├── Dockerfile
 │   ├── requirements.txt / requirements-dev.txt
 │   └── pyproject.toml         Ruff and pytest settings
@@ -240,7 +240,7 @@ Every response carries an `X-Request-ID` header, and every error uses one shape:
 | **5 Approval + guardrails** | 8 | Policy gate, `interrupt()` approval, Action agent, validator BLOCK, input guardrails, PII masking ✅ |
 | **6 API** | 9 | All endpoints, logins, SSE progress stream, rate limits, uploads, records and metrics ✅ |
 | **7 Frontend** | 10 | Login, chat with live stages, sources, approval slip, approvals inbox, admin page, request records ✅ |
-| 8 Evaluation | 11 | 40-case evaluation set, metrics, tracing, report |
+| **8 Evaluation** | 11 | 40 cases in seven categories, route, escalation, tool and guardrail scores, fault injection, pinned model, report, admin view ✅ |
 | 9 Deploy | 12 | Vercel + Render/Railway, full README, demo |
 
 ## Security notes

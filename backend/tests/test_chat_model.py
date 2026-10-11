@@ -209,6 +209,21 @@ async def test_reasoning_effort_is_sent_only_when_set() -> None:
     assert tuned.sent_to("/v1/chat/completions")[0].body["reasoning_effort"] == "low"
 
 
+async def test_temperature_is_sent_only_when_set() -> None:
+    plain, fixed = (
+        FakeGateway(api_key=KEY, replies=[GOOD]),
+        FakeGateway(api_key=KEY, replies=[GOOD]),
+    )
+
+    await model(plain).structured(Verdict, system="x", messages=USER, tier="fast")
+    await model(fixed, llm_temperature=0).structured(
+        Verdict, system="x", messages=USER, tier="fast"
+    )
+
+    assert "temperature" not in plain.sent_to("/v1/chat/completions")[0].body
+    assert fixed.sent_to("/v1/chat/completions")[0].body["temperature"] == 0
+
+
 # ------------------------------------------------------------ Gemini and other providers
 
 STOCK_TOOL = {
