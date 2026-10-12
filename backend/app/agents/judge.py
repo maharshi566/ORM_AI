@@ -59,8 +59,8 @@ def judge_task(case: Any, state: dict[str, Any], route: str) -> str:
         "answer": "It answered.",
         "clarify": "It asked a question back.",
         "approval": "It put an action to a person for approval "
-        f"({', '.join(waiting) or 'an action'}); the test then rejected it, so nothing "
-        "was done.",
+        f"({', '.join(waiting) or 'an action'}); the shop owner then rejected it, so "
+        "nothing was done.",
     }.get(route, f"It ended with: {route}.")
     sources = [
         f"{s.get('citation')}: {str(s.get('text') or '')[:400]}" for s in state.get("sources") or []

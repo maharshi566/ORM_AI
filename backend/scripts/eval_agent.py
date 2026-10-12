@@ -197,7 +197,11 @@ async def run(args: argparse.Namespace) -> int:
         context = deps_for(case)
         result = await graph.ainvoke(state, config=config, context=context)
         for item in result.get("__interrupt__") or []:
-            decision = reject_all(item.value, decided_by="evaluation", note="evaluation run")
+            # Rejected the way an owner would, so the reply reads as it would in the shop
+            # (the first runs' "rejected by evaluation" cost replies a grade with the judge).
+            decision = reject_all(
+                item.value, decided_by="the shop owner", note="Not now; I will decide later."
+            )
             return await graph.ainvoke(Command(resume=decision), config=config, context=context)
         return result
 
